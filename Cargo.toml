@@ -1,0 +1,12 @@
+[package]
+name = "pegasus"
+version = "0.1.0"
+edition = "2018"
+description = "Work-in-progress Nintendo Switch emulator, written in Rust and slightly less focused on gaming"
+
+[dependencies]
+unicorn = { path = "unicorn-rs" }
+paste = "1.0"
+lz4 = "1.23.2"
+rsevents = "0.2.1"
+parking_lot = "0.11.2"
