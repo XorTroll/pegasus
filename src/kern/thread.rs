@@ -1,12 +1,7 @@
-use std::borrow::Borrow;
-use std::borrow::BorrowMut;
-use std::collections::BTreeMap;
-use std::path::Prefix;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::thread::Builder;
 use std::thread::JoinHandle;
-use std::thread::Thread;
-use std::time;
+use std::time::{self, Duration};
 use parking_lot::Mutex;
 use rsevents::AutoResetEvent;
 use rsevents::Awaitable;
@@ -15,15 +10,13 @@ use rsevents::State;
 use parking_lot::lock_api::RawMutex as RawMutexTrait;
 use parking_lot::RawMutex;
 use crate::emu::cpu;
-use crate::util::Shared;
+use crate::util::{Shared, SharedObject, make_shared};
 use crate::result::*;
 
-use super::KAutoObject;
+use super::{KAutoObject, KFutureSchedulerObject, get_time_manager};
 use super::KSynchronizationObject;
 use super::proc::KProcess;
 use super::proc::has_current_process;
-use super::proc::get_current_process;
-use super::result;
 
 // KCriticalSection
 // Note: thanks Rust for only supporting Mutex functionality through guards/wrapping objects, luckily parking_lot exposes a classic mutex type
@@ -34,7 +27,7 @@ pub struct KCriticalSection {
 }
 
 impl KCriticalSection {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             lock: RawMutex::INIT,
             recursion_count: 0
@@ -42,18 +35,20 @@ impl KCriticalSection {
     }
 
     pub fn enter(&mut self) {
+        log_line!("KCriticalSection enter");
         self.lock.lock();
         self.recursion_count += 1;
     }
 
     pub fn leave(&mut self) {
+        log_line!("KCriticalSection leave");
         if self.recursion_count == 0 {
             return;
         }
 
         self.recursion_count -= 1;
         if self.recursion_count == 0 {
-            let scheduled_cores_mask = KScheduler::select_threads();
+            let _scheduled_cores_mask = KScheduler::select_threads();
 
             unsafe {
                 self.lock.unlock();
@@ -99,20 +94,18 @@ impl<'a> Drop for KCriticalSectionGuard<'a> {
     }
 }
 
-static mut G_CRITICAL_SECTION: Option<KCriticalSection> = None;
+static mut G_CRITICAL_SECTION: KCriticalSection = KCriticalSection::new();
 
-unsafe fn ensure_critical_section() {
-    if G_CRITICAL_SECTION.is_none() {
-        G_CRITICAL_SECTION = Some(KCriticalSection::new());
+#[inline]
+pub fn get_critical_section() -> &'static mut KCriticalSection {
+    unsafe {
+        &mut G_CRITICAL_SECTION
     }
 }
 
-pub fn get_critical_section() -> &'static mut KCriticalSection {
-    unsafe {
-        ensure_critical_section();
-
-        G_CRITICAL_SECTION.as_mut().unwrap()
-    }
+#[inline]
+pub fn make_critical_section_guard<'a>() -> KCriticalSectionGuard<'a> {
+    KCriticalSectionGuard::new(get_critical_section())
 }
 
 // ---
@@ -146,7 +139,7 @@ pub enum ThreadState {
 impl ThreadState {
     pub fn update_flags(&mut self, other: Self) {
         *self = unsafe {
-            core::mem::transmute((((*self as u16) & (ThreadState::HighMask as u16)) | ((other as u16) | (ThreadState::LowMask as u16))))
+            core::mem::transmute(((*self as u16) & (ThreadState::HighMask as u16)) | ((other as u16) | (ThreadState::LowMask as u16)))
         };
     }
 
@@ -161,20 +154,22 @@ static mut G_THREAD_ID_COUNTER: Mutex<u64> = parking_lot::const_mutex(0);
 
 pub fn new_thread_id() -> u64 {
     unsafe {
-        let thread_id = *G_THREAD_ID_COUNTER.lock() + 1;
-        *G_THREAD_ID_COUNTER.lock() = thread_id;
-        return thread_id;
+        let mut thread_id_counter = G_THREAD_ID_COUNTER.lock();
+        *thread_id_counter += 1;
+        return *thread_id_counter;
     }
 }
 
 static mut G_THREAD_RESELECTION_REQUESTED: bool = false;
 
+#[inline]
 pub fn set_thread_reselection_requested(flag: bool) {
     unsafe {
         G_THREAD_RESELECTION_REQUESTED = flag;
     }
 }
 
+#[inline]
 pub fn thread_reselection_requested() -> bool {
     unsafe {
         G_THREAD_RESELECTION_REQUESTED
@@ -200,6 +195,8 @@ pub struct KThread {
     pub owner_process: Option<Shared<KProcess>>,
     pub cpu_exec_ctx: Option<cpu::ExecutionContext>,
     pub siblings_per_core: Vec<Option<Shared<KThread>>>,
+    pub withholder: Option<Vec<Shared<KThread>>>,
+    pub withholder_entry: Option<Shared<KThread>>,
     pub priority: i32,
     pub host_thread_builder: Option<Builder>,
     pub host_thread_handle: Option<JoinHandle<()>>,
@@ -227,15 +224,24 @@ impl KSynchronizationObject for KThread {
     }
 }
 
+impl KFutureSchedulerObject for KThread {
+    fn time_up(&mut self) {
+        todo!("time_up");
+    }
+}
+
 impl KThread {
     pub fn new(owner_process: Option<Shared<KProcess>>, host_thread_name: String, priority: i32, cpu_core: i32, exec_ctx_args: Option<(u64, usize)>) -> Result<Shared<Self>> {
         let host_builder = Builder::new().name(host_thread_name);
 
         let cpu_exec_ctx = match owner_process.as_ref() {
             Some(owner_proc) => match exec_ctx_args {
-                Some((entry_addr, stack_size)) => {
-                    owner_proc.get().increment_refcount();
-                    Some(owner_proc.get().cpu_ctx.create_execution_context(stack_size, entry_addr)?)
+                Some((entry_addr, stack_size)) => match owner_proc.get().cpu_ctx.as_ref() {
+                    Some(cpu_ctx) => {
+                        // owner_proc.get().increment_refcount();
+                        Some(cpu_ctx.create_execution_context(stack_size, entry_addr)?)
+                    },
+                    None => None
                 },
                 None => None,
             },
@@ -248,7 +254,7 @@ impl KThread {
             siblings_per_core.push(None);
         }
 
-        Ok(Shared::new(Self {
+        Ok(make_shared(Self {
             refcount: AtomicI32::new(1),
             waiting_threads: Vec::new(),
             has_exited: false,
@@ -267,6 +273,8 @@ impl KThread {
             owner_process: owner_process,
             cpu_exec_ctx: cpu_exec_ctx,
             siblings_per_core: siblings_per_core,
+            withholder: None,
+            withholder_entry: None,
             priority: priority,
             host_thread_builder: Some(host_builder),
             host_thread_handle: None,
@@ -324,37 +332,41 @@ impl KThread {
     }
 
     pub fn reschedule(thread: &mut Shared<KThread>, new_state_flags: ThreadState) {
-        let guard = KCriticalSectionGuard::new(get_critical_section());
+        let _ = make_critical_section_guard();
 
         let old_state = thread.get().state;
         thread.get().state.update_flags(new_state_flags);
         Self::adjust_scheduling(thread, old_state);
     }
 
-    fn exec_thread_fn(thread: Shared<KThread>) {
+    fn exec_thread_fn<T: Copy + Send + Sync + 'static, U: Copy + Send + Sync + 'static>(thread: Shared<KThread>, arg_x0: T, arg_x1: U) {
         set_current_thread(thread.clone());
 
         let mut cpu_exec_ctx_handle = thread.get().cpu_exec_ctx.as_mut().unwrap().get_handle();
         let exec_start_addr = thread.get().cpu_exec_ctx.as_mut().unwrap().exec_start_addr;
         let exec_end_addr = thread.get().cpu_exec_ctx.as_mut().unwrap().exec_end_addr;
 
-        cpu_exec_ctx_handle.start(0u64, 0xBEEFu32, exec_start_addr, exec_end_addr).unwrap();
+        cpu_exec_ctx_handle.start(arg_x0, arg_x1, exec_start_addr, exec_end_addr).unwrap();
+
+        reset_current_thread();
     }
 
     fn host_thread_fn<F: FnOnce() + Send + 'static>(thread: Shared<KThread>, f: F) {
-        set_current_thread(thread);
+        set_current_thread(thread.clone());
 
         f();
+
+        reset_current_thread();
     }
 
-    pub fn start_exec(thread: &mut Shared<KThread>) -> Result<()> {
+    pub fn start_exec<T: Copy + Send + Sync + 'static, U: Copy + Send + Sync + 'static>(thread: &mut Shared<KThread>, arg_x0: T, arg_x1: U) -> Result<()> {
         result_return_unless!(thread.get().host_thread_builder.is_some(), 0x1);
 
         let builder = thread.get().host_thread_builder.take();
 
         let thread_entry_clone = thread.clone();
-        thread.get().host_thread_handle = Some(builder.unwrap().spawn(|| {
-            Self::exec_thread_fn(thread_entry_clone);
+        thread.get().host_thread_handle = Some(builder.unwrap().spawn(move || {
+            Self::exec_thread_fn(thread_entry_clone, arg_x0, arg_x1);
         }).unwrap());
 
         Ok(())
@@ -366,7 +378,7 @@ impl KThread {
         let builder = thread.get().host_thread_builder.take();
 
         let thread_entry_clone = thread.clone();
-        thread.get().host_thread_handle = Some(builder.unwrap().spawn(|| {
+        thread.get().host_thread_handle = Some(builder.unwrap().spawn(move || {
             Self::host_thread_fn(thread_entry_clone, f);
         }).unwrap());
 
@@ -381,18 +393,28 @@ impl KThread {
 #[thread_local]
 static mut G_CURRENT_THREAD: Option<Shared<KThread>> = None;
 
+#[inline]
 fn set_current_thread(thread: Shared<KThread>) {
     unsafe {
         G_CURRENT_THREAD = Some(thread);
     }
 }
 
+#[inline]
+fn reset_current_thread() {
+    unsafe {
+        G_CURRENT_THREAD = None;
+    }
+}
+
+#[inline]
 pub fn has_current_thread() -> bool {
     unsafe {
         G_CURRENT_THREAD.is_some()
     }
 }
 
+#[inline]
 pub fn get_current_thread() -> Shared<KThread> {
     unsafe {
         assert!(has_current_thread());
@@ -441,10 +463,10 @@ pub struct KPriorityQueue {
 impl KPriorityQueue {
     fn ensure_queues_ready(&mut self) {
         if self.scheduled_threads_per_prio_per_core.is_empty() {
-            for core in 0..CPU_CORE_COUNT {
+            for _ in 0..CPU_CORE_COUNT {
                 let mut scheduled_threads_per_prio: Vec<Vec<Shared<KThread>>> = Vec::new();
                 let mut suggested_threads_per_prio: Vec<Vec<Shared<KThread>>> = Vec::new();
-                for prio in 0..PRIORITY_COUNT {
+                for _ in 0..PRIORITY_COUNT {
                     scheduled_threads_per_prio.push(Vec::new());
                     suggested_threads_per_prio.push(Vec::new());
                 }
@@ -463,7 +485,7 @@ impl KPriorityQueue {
         }
     }
 
-    pub fn suggest(&mut self, prio: i32, cpu_core: i32, mut thread: Shared<KThread>) {
+    pub fn suggest(&mut self, prio: i32, cpu_core: i32, thread: Shared<KThread>) {
         self.ensure_queues_ready();
 
         if prio < PRIORITY_COUNT as i32 {
@@ -475,7 +497,7 @@ impl KPriorityQueue {
         }
     }
 
-    pub fn unsuggest(&mut self, prio: i32, cpu_core: i32, mut thread: Shared<KThread>) {
+    pub fn unsuggest(&mut self, prio: i32, cpu_core: i32, thread: Shared<KThread>) {
         self.ensure_queues_ready();
         
         if prio < PRIORITY_COUNT as i32 {
@@ -490,7 +512,7 @@ impl KPriorityQueue {
         }
     }
 
-    pub fn schedule(&mut self, prio: i32, cpu_core: i32, mut thread: Shared<KThread>) {
+    pub fn schedule(&mut self, prio: i32, cpu_core: i32, thread: Shared<KThread>) {
         self.ensure_queues_ready();
 
         if prio < PRIORITY_COUNT as i32 {
@@ -502,7 +524,7 @@ impl KPriorityQueue {
         }
     }
 
-    pub fn schedule_prepend(&mut self, prio: i32, cpu_core: i32, mut thread: Shared<KThread>) {
+    pub fn schedule_prepend(&mut self, prio: i32, cpu_core: i32, thread: Shared<KThread>) {
         self.ensure_queues_ready();
 
         if prio < PRIORITY_COUNT as i32 {
@@ -514,7 +536,7 @@ impl KPriorityQueue {
         }
     }
 
-    pub fn reschedule(&mut self, prio: i32, cpu_core: i32, mut thread: Shared<KThread>) -> Option<Shared<KThread>> {
+    pub fn reschedule(&mut self, prio: i32, cpu_core: i32, thread: Shared<KThread>) -> Option<Shared<KThread>> {
         if prio < PRIORITY_COUNT as i32 {
             thread.get().siblings_per_core[cpu_core as usize] = None;
 
@@ -528,7 +550,7 @@ impl KPriorityQueue {
         None
     }
 
-    pub fn unschedule(&mut self, prio: i32, cpu_core: i32, mut thread: Shared<KThread>) {
+    pub fn unschedule(&mut self, prio: i32, cpu_core: i32, thread: Shared<KThread>) {
         self.ensure_queues_ready();
         
         if prio < PRIORITY_COUNT as i32 {
@@ -608,6 +630,7 @@ impl KPriorityQueue {
 
 static mut G_PRIORITY_QUEUE: KPriorityQueue = KPriorityQueue::new();
 
+#[inline]
 pub fn get_priority_queue() -> &'static mut KPriorityQueue {
     unsafe {
         &mut G_PRIORITY_QUEUE
@@ -620,6 +643,7 @@ pub fn get_priority_queue() -> &'static mut KPriorityQueue {
 
 static mut G_SCHEDULERS: Vec<KScheduler> = Vec::new();
 
+#[inline]
 pub fn get_scheduler(cpu_core: i32) -> &'static mut KScheduler {
     unsafe {
         &mut G_SCHEDULERS[cpu_core as usize]
@@ -654,7 +678,7 @@ pub struct KScheduler {
 
 impl KScheduler {
     pub fn new(cpu_core: i32) -> Result<Self> {
-        let mut idle_thread = KThread::new_host(None, format!("pg.kern.thread.SchedulerIdleThreadForCore{}", cpu_core), IDLE_THREAD_PRIORITY, cpu_core)?;  
+        let idle_thread = KThread::new_host(None, format!("pg.kern.thread.KSchedulerIdleThreadForCore{}", cpu_core), IDLE_THREAD_PRIORITY, cpu_core)?;  
 
         Ok(Self {
             cpu_core: cpu_core,
@@ -669,12 +693,12 @@ impl KScheduler {
     }
 
     fn idle_thread_fn(cpu_core: i32) {
-        println!("Current thread name: {}", get_current_thread().get().host_thread_handle.as_ref().unwrap().thread().name().unwrap());
+        log_line!("Hello World!");
     
-        let mut scheduler = get_scheduler(cpu_core);
+        let scheduler = get_scheduler(cpu_core);
         loop {
             *scheduler.needs_scheduling.lock() = false;
-            // memory barrier?
+            // TODO: memory barrier?
             let selected_thread = match scheduler.selected_thread.lock().as_ref() {
                 Some(thread) => Some(thread.clone()),
                 None => None
@@ -702,16 +726,13 @@ impl KScheduler {
     fn pick_next_thread(&mut self, mut selected_thread: Option<Shared<KThread>>) -> Shared<KThread> {
         loop {
             if let Some(thread) = selected_thread {
-                println!("PA");
                 if thread.get().ctx.lock() {
                     self.switch_to(Some(thread.clone()));
                     if !*self.needs_scheduling.lock() {
                         return self.selected_thread.lock().as_ref().unwrap().clone();
                     }
 
-                    println!("PB");
                     thread.get().ctx.unlock();
-                    println!("PC");
                 }
                 else {
                     return self.idle_thread.clone();
@@ -722,10 +743,8 @@ impl KScheduler {
                 return self.idle_thread.clone();
             }
 
-            println!("PA1");
             *self.needs_scheduling.lock() = false;
             selected_thread = Some(self.selected_thread.lock().as_ref().unwrap().clone());
-            println!("PA2");
         }
     }
 
@@ -735,25 +754,23 @@ impl KScheduler {
 
         if !cur_thread.ptr_eq(&thread) {
             let cur_instant = time::Instant::now();
-            let ticks_delta = cur_instant.duration_since(self.last_context_switch_instant);
+            let _ticks_delta = cur_instant.duration_since(self.last_context_switch_instant);
 
-            /* cur thread add cpu time */
+            // TODO: cur thread add cpu time
 
             if has_current_process() {
-                /* cur process add cpu time */
+                // TODO: cur process add cpu time
             }
 
             self.last_context_switch_instant = cur_instant;
 
             if has_current_process() {
-                println!("AS");
                 let is_thread_running = !cur_thread.get().is_termination_requested();
                 let is_in_same_core = cur_thread.get().active_core == self.cpu_core;
                 self.prev_thread = match is_thread_running && is_in_same_core {
                     true => Some(cur_thread.clone()),
                     false => None
                 };
-                println!("ASS");
             }
             else if cur_thread.ptr_eq(&self.idle_thread) {
                 self.prev_thread = None;
@@ -787,9 +804,7 @@ impl KScheduler {
         cur_thread.get().ctx.unlock();
 
         for core in 0..CPU_CORE_COUNT as i32 {
-            println!("Qt {}", core);
             get_scheduler(core).idle_interrupt_event.set();
-            println!("Qtt {}", core);
         }
 
         let next_thread = self.pick_next_thread(selected_thread);
@@ -807,14 +822,14 @@ impl KScheduler {
     fn select_thread(&mut self, next_thread: Option<Shared<KThread>>) -> u64 {
         let mut prev_selected_thread = self.selected_thread.lock();
 
-        let threads_match = match (next_thread.is_none() && prev_selected_thread.is_none()) {
+        let threads_match = match next_thread.is_none() && prev_selected_thread.is_none() {
             true => true,
             false => next_thread.as_ref().unwrap().ptr_eq(prev_selected_thread.as_ref().unwrap())
         };
 
         if !threads_match {
-            if let Some(prev_selected_thread_v) = prev_selected_thread.as_ref() {
-                // TODO: set last scheduled time
+            if let Some(_prev_selected_thread_v) = prev_selected_thread.as_ref() {
+                todo!("select_thread set last scheduled time");
             }
 
             *prev_selected_thread = next_thread;
@@ -889,3 +904,61 @@ impl KScheduler {
 }
 
 // ---
+
+// KConditionVariable
+
+pub struct KConditionVariable {
+}
+
+impl KConditionVariable {
+    pub fn wait(thread_list: &mut Vec<Shared<KThread>>, timeout: Duration) {
+        get_critical_section().enter();
+
+        let mut cur_thread = get_current_thread();
+        cur_thread.get().withholder = Some(thread_list.clone());
+        KThread::reschedule(&mut cur_thread, ThreadState::Waiting);
+        let withholder_idx = thread_list.len();
+        cur_thread.get().withholder_entry = Some(cur_thread.clone());
+        let cur_thread_clone = cur_thread.clone();
+        cur_thread.get().withholder.as_mut().unwrap().push(cur_thread_clone);
+
+        if cur_thread.get().should_be_terminated || (cur_thread.get().state == ThreadState::Terminated) {
+            thread_list.remove(withholder_idx);
+
+            KThread::reschedule(&mut cur_thread, ThreadState::Runnable);
+            cur_thread.get().withholder = None;
+
+            get_critical_section().leave();
+        }
+        else {
+            if !timeout.is_zero() {
+                get_time_manager().schedule_future_invocation(cur_thread.clone(), timeout);
+            }
+
+            get_critical_section().leave();
+
+            if !timeout.is_zero() {
+                get_time_manager().unschedule_future_invocation(cur_thread.clone());
+            }
+        }
+    }
+
+    pub fn notify_all(thread_list: &mut Vec<Shared<KThread>>) {
+        let _ = make_critical_section_guard();
+
+        let mut remove_withholder_entries: Vec<Shared<KThread>> = Vec::new();
+        for thread in thread_list.iter_mut() {
+            if let Some(withholder_entry) = thread.get().withholder_entry.as_ref() {
+                remove_withholder_entries.push(withholder_entry.clone());
+            }
+
+            thread.get().withholder_entry = None;
+            thread.get().withholder = None;
+            KThread::reschedule(thread, ThreadState::Runnable);
+        }
+
+        for obj in remove_withholder_entries.iter() {
+            thread_list.retain(|thread_obj| !thread_obj.ptr_eq(obj));
+        }
+    }
+}

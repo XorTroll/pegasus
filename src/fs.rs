@@ -1,8 +1,8 @@
-use std::path::{Path, PathBuf};
-use std::fs::{self, DirEntry, File as StdFile, OpenOptions, ReadDir};
-use std::io::{Error, ErrorKind, Read, Result as IoResult, Seek, SeekFrom, Write};
+use std::path::PathBuf;
+use std::fs::{self, DirEntry, File as StdFile, OpenOptions};
+use std::io::{Read, Result as IoResult, Seek, SeekFrom, Write};
 use crate::util;
-use crate::util::Shared;
+use crate::util::{Shared, SharedObject, make_shared};
 use crate::result::*;
 
 bit_enum! {
@@ -147,14 +147,20 @@ impl HostFile {
 }
 
 impl File for HostFile {
-    fn read(&mut self, offset: u64, data: &mut [u8], option: ReadOption) -> Result<usize> {
+    fn read(&mut self, offset: u64, data: &mut [u8], _option: ReadOption) -> Result<usize> {
         convert_io_result(self.inner_file.seek(SeekFrom::Start(offset)))?;
         convert_io_result(self.inner_file.read(data))
     }
 
     fn write(&mut self, offset: u64, data: &[u8], option: WriteOption) -> Result<usize> {
         convert_io_result(self.inner_file.seek(SeekFrom::Start(offset)))?;
-        convert_io_result(self.inner_file.write(data))
+        let written = convert_io_result(self.inner_file.write(data))?;
+
+        if option == WriteOption::Flush {
+            convert_io_result(self.inner_file.flush())?;
+        }
+
+        Ok(written)
     }
 
     fn flush(&mut self) -> Result<()> {
@@ -169,7 +175,7 @@ impl File for HostFile {
         convert_io_result(self.inner_file.stream_len()).map(|len| len as usize)
     }
 
-    fn operate_range(&mut self, op_id: OperationId, offset: u64, size: usize) -> Result<RangeInfo> {
+    fn operate_range(&mut self, _op_id: OperationId, _offset: u64, _size: usize) -> Result<RangeInfo> {
         todo!("OperateRange for host filesystem file");
     }
 }
@@ -315,7 +321,7 @@ impl FileSystem for HostFileSystem {
 
         let std_file = convert_io_result(OpenOptions::new().read(open_mode.contains(FileOpenMode::Read())).write(open_mode.contains(FileOpenMode::Write())).append(open_mode.contains(FileOpenMode::Append())).open(abs_path))?;
 
-        let file = Shared::new(HostFile::new(std_file));
+        let file = make_shared(HostFile::new(std_file));
         Ok(file)
     }
 
@@ -324,7 +330,7 @@ impl FileSystem for HostFileSystem {
 
         let entries = convert_io_result(convert_io_result(fs::read_dir(abs_path))?.collect::<IoResult<Vec<_>>>())?;
 
-        let dir = Shared::new(HostDirectory::new(entries, open_mode));
+        let dir = make_shared(HostDirectory::new(entries, open_mode));
         Ok(dir)
     }
 
@@ -333,11 +339,11 @@ impl FileSystem for HostFileSystem {
     }
 
 
-    fn get_free_space_size(&mut self, path: PathBuf) -> Result<usize> {
+    fn get_free_space_size(&mut self, _path: PathBuf) -> Result<usize> {
         todo!("GetFreeSpaceSize for host filesystem");
     }
 
-    fn get_total_space_size(&mut self, path: PathBuf) -> Result<usize> {
+    fn get_total_space_size(&mut self, _path: PathBuf) -> Result<usize> {
         todo!("GetTotalSpaceSize for host filesystem");
     }
 
@@ -348,10 +354,7 @@ impl FileSystem for HostFileSystem {
         Ok(())
     }
 
-    fn get_file_time_stamp_raw(&mut self, path: PathBuf) -> Result<TimeStampRaw> {
-        let abs_path = self.make_path(path);
-        let metadata = convert_io_result(fs::metadata(abs_path))?;
-
+    fn get_file_time_stamp_raw(&mut self, _path: PathBuf) -> Result<TimeStampRaw> {
         todo!("GetFileTimeStampRaw for host filesystem");
     }
 }

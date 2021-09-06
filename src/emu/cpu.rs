@@ -1,13 +1,10 @@
 use unicorn::{RegisterARM64, Engine, Handle};
 use unicorn::unicorn_const::{Arch, Mode, Permission};
-use std::cell::UnsafeCell;
-use std::collections::BTreeMap;
 use std::boxed::Box;
 use std::ffi::c_void;
-use crate::util;
+use crate::util::{self, SharedObject};
 use crate::result::*;
 use crate::emu::kern as emu_kern;
-use crate::kern;
 use crate::kern::thread::{self, get_scheduler};
 use crate::kern::svc;
 use crate::ldr;
@@ -101,7 +98,7 @@ pub type HookedInstructionHandlerFn = Box<dyn Fn(ContextHandle) -> Result<()>>;
 
 const SVC_INSN_BASE: u32 = 0xD4000001;
 
-fn unicorn_code_hook(uc_h: Handle, address: u64, size: usize) {
+fn unicorn_code_hook(uc_h: Handle, address: u64, _size: usize) {
     let ctx_h = ContextHandle(uc_h);
     let cur_insn: u32 = ctx_h.read_memory_val(address).unwrap();
 
@@ -112,6 +109,7 @@ fn unicorn_code_hook(uc_h: Handle, address: u64, size: usize) {
     if svc_insn == cur_insn {
         if let Some(svc_id) = svc::SvcId::from(maybe_svc_id) {
             if let Some(svc_handler) = emu_kern::try_find_svc_handler(&svc_id) {
+                // TODO: check with NPDM flags allow calling the SVC (cur_process->npdm->kernel capabilities->enabled svcs)
                 (svc_handler)(ctx_h).unwrap();
             }
             else {
@@ -130,21 +128,17 @@ fn unicorn_intr_hook(_uc_h: Handle, intr_no: u32) {
     // In other CPU emulators, we would be able to get the SVC ID from here, but unicorn itself doesn't provide it.
     // Therefore, the SVCs are handled above (thanks unicorn for this awful implementation)
 
-    println!("Interrupt {}!", intr_no);
-
-    println!("Scheduling...");
+    log_line!("Interrupt {}!", intr_no);
+    log_line!("Scheduling...");
 
     let cur_thread = thread::get_current_thread();
-    println!("IS...");
     let is = cur_thread.get().is_schedulable;
     if is {
-        println!("IS!");
         let cur_core = cur_thread.get().cur_core;
         get_scheduler(cur_core).schedule();
-        println!("SCHD...");
     }
 
-    println!("Scheduled!");
+    log_line!("Scheduled!");
 }
 
 fn create_memory_region(segment_file_data: Vec<u8>, address: u64, is_compressed: bool, section_size: usize, perm: Permission) -> Result<MemoryRegion> {
@@ -157,7 +151,7 @@ fn create_memory_region(segment_file_data: Vec<u8>, address: u64, is_compressed:
     
     assert_eq!(segment_data.len(), section_size);
     segment_data.resize_with(util::align_up(section_size, 0x1000), || 0);
-    println!("Creating memory region (size {:#X}, aligned {:#X}) at address {:#X}...", section_size, segment_data.len(), address);
+    log_line!("Creating memory region (size {:#X}, aligned {:#X}) at address {:#X}...", section_size, segment_data.len(), address);
 
     Ok(MemoryRegion::from(address, segment_data, perm))
 }

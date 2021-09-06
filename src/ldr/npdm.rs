@@ -1,5 +1,4 @@
 use std::mem;
-use crate::kern;
 use crate::kern::svc;
 use crate::util;
 use crate::result::*;
@@ -26,9 +25,19 @@ impl MetaFlags {
         read_bits!(0, 0, self.bits) != 0
     }
 
+    pub const fn set_64bit(&mut self, is_64bit: bool) {
+        write_bits!(0, 0, self.bits, is_64bit as u8);
+    }
+
     pub const fn get_address_space(&self) -> AddressSpaceType {
         unsafe {
             mem::transmute(read_bits!(1, 3, self.bits) as u8)
+        }
+    }
+
+    pub const fn set_address_space(&mut self, addr_space: AddressSpaceType) {
+        unsafe {
+            write_bits!(1, 3, self.bits, mem::transmute::<AddressSpaceType, u8>(addr_space));
         }
     }
 
@@ -36,8 +45,28 @@ impl MetaFlags {
         read_bits!(4, 4, self.bits) != 0
     }
 
+    pub const fn set_optimize_memory_allocation(&mut self, optimize_memory_allocation: bool) {
+        write_bits!(4, 4, self.bits, optimize_memory_allocation as u8);
+    }
+
     pub const fn disable_device_address_space_merge(&self) -> bool {
         read_bits!(5, 5, self.bits) != 0
+    }
+
+    pub const fn set_disable_device_address_space_merge(&mut self, disable_device_address_space_merge: bool) {
+        write_bits!(5, 5, self.bits, disable_device_address_space_merge as u8);
+    }
+
+    pub const fn new(is_64bit: bool, addr_space: AddressSpaceType, optimize_memory_allocation: bool, disable_device_address_space_merge: bool) -> Self {
+        let mut flags = Self {
+            bits: 0
+        };
+        flags.set_64bit(is_64bit);
+        flags.set_address_space(addr_space);
+        flags.set_optimize_memory_allocation(optimize_memory_allocation);
+        flags.set_disable_device_address_space_merge(disable_device_address_space_merge);
+
+        flags
     }
 }
 
@@ -57,8 +86,7 @@ pub struct Meta {
     pub main_thread_stack_size: u32,
     pub name: util::CString<0x10>,
     pub product_code: util::CString<0x10>,
-    pub reserved_4: [u8; 0x20], // Splitted for Deserialize to work :P
-    pub reserved_5: [u8; 0x10],
+    pub reserved_4: [u8; 0x30],
     pub aci0_offset: u32,
     pub aci0_size: u32,
     pub acid_offset: u32,
@@ -101,7 +129,7 @@ pub enum MemoryRegion {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(C)]
 pub struct AcidFlags {
-    bits: u32
+    pub bits: u32
 }
 
 impl AcidFlags {
@@ -109,22 +137,39 @@ impl AcidFlags {
         read_bits!(0, 0, self.bits) != 0
     }
 
+    pub const fn set_production_flag(&mut self, production_flag: bool) {
+        write_bits!(0, 0, self.bits, production_flag as u32);
+    }
+
     pub const fn has_unqualified_approval(&self) -> bool {
         read_bits!(1, 1, self.bits) != 0
+    }
+
+    pub const fn set_unqualified_approval(&mut self, unqualified_approval: bool) {
+        write_bits!(1, 1, self.bits, unqualified_approval as u32);
+    }
+
+    pub const fn new(production_flag: bool, unqualified_approval: bool) -> Self {
+        let mut flags = Self {
+            bits: 0
+        };
+        flags.set_production_flag(production_flag);
+        flags.set_unqualified_approval(unqualified_approval);
+        flags
     }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(C)]
 pub struct Acid {
-    rsa_signature: [u8; 0x100],
-    rsa_nca_sig_public_key: [u8; 0x100],
-    magic: u32,
-    size: u32,
-    reserved_1: [u8; 0x4],
-    flags: AcidFlags,
-    program_id_min: u64,
-    program_id_max: u64,
+    pub rsa_signature: [u8; 0x100],
+    pub rsa_nca_sig_public_key: [u8; 0x100],
+    pub magic: u32,
+    pub size: u32,
+    pub reserved_1: [u8; 0x4],
+    pub flags: AcidFlags,
+    pub program_id_min: u64,
+    pub program_id_max: u64,
     pub fs_access_control_offset: u32,
     pub fs_access_control_size: u32,
     pub service_access_control_offset: u32,
@@ -498,7 +543,8 @@ impl KernelCapabilityData {
                             capability_data.enabled_svcs.push(svc_id);
                         }
                         else {
-                            println!("Unsupported/invalid SVC: {:#X}", raw_svc_id);
+                            // TODO: ignore, error...? many homebrew NPDMs have SVC 0x0 (invalid one), for instance...
+                            log_line!("(warning) Unsupported/invalid SVC: {:#X}", raw_svc_id);
                         }
                     }
                 }

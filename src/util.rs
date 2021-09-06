@@ -1,13 +1,13 @@
 use std::fmt;
 use std::marker::Unsize;
+use std::mem::ManuallyDrop;
 use std::ops::CoerceUnsized;
 use std::ptr;
+use std::any::Any;
 use std::sync::Arc;
-use std::cell::RefCell;
 use std::ops::Deref;
-use std::ops::DerefMut;
-use parking_lot::{Mutex, MutexGuard};
-
+use parking_lot::lock_api::RawMutex as RawMutexTrait;
+use parking_lot::{Mutex, MutexGuard, RawMutex};
 use crate::result::*;
 
 macro_rules! bit_enum {
@@ -87,6 +87,43 @@ macro_rules! write_bits {
 macro_rules! read_bits {
     ($start:expr, $end:expr, $value:expr) => {
         ($value & (((1 << ($end - $start + 1)) - 1) << $start)) >> $start
+    };
+}
+
+static mut G_LOG_LOCK: RawMutex = RawMutex::INIT;
+
+pub fn log_guard_lock() {
+    unsafe {
+        G_LOG_LOCK.lock();
+    }
+}
+
+pub fn log_guard_unlock() {
+    unsafe {
+        G_LOG_LOCK.unlock();
+    }
+}
+
+#[macro_export]
+macro_rules! log_line {
+    ($($arg:tt)*) => {
+        {
+            $crate::util::log_guard_lock();
+
+            let log_msg = format!($($arg)*);
+            let process_name = match $crate::kern::proc::has_current_process() {
+                true => String::from($crate::util::SharedObject::get(&$crate::kern::proc::get_current_process()).npdm.meta.name.get_str().unwrap()),
+                false => String::from("Host~pegasus")
+            };
+            let thread_name = match $crate::kern::thread::has_current_thread() {
+                true => String::from($crate::util::SharedObject::get(&$crate::kern::thread::get_current_thread()).host_thread_handle.as_ref().unwrap().thread().name().unwrap()),
+                false => format!("Host~{}", std::thread::current().name().unwrap())
+            };
+
+            println!("[{} -> {}] {}", process_name, thread_name, log_msg);
+
+            $crate::util::log_guard_unlock();
+        }
     };
 }
 
@@ -353,32 +390,59 @@ pub fn slice_read_data_advance(slice: &[u8], offset: &mut usize, len: usize) -> 
     Ok(data)
 }
 
-pub struct Shared<T: ?Sized>(Arc<Mutex<T>>);
+pub type Shared<T> = Arc<Mutex<T>>;
+pub type SharedAny = Arc<dyn Any + Send + Sync>;
 
-impl<T: Sized> Shared<T> {
-    pub fn new(t: T) -> Self {
-        Self(Arc::new(Mutex::new(t)))
-    }
+#[inline]
+pub fn make_shared<T: Sized>(t: T) -> Shared<T> {
+    Arc::new(Mutex::new(t))
 }
 
-impl<T: ?Sized> Shared<T> {
+pub trait SharedObject<T: ?Sized> {
+    fn get(&self) -> MutexGuard<'_, T>;
+    fn ptr_eq(&self, other: &Shared<T>) -> bool;
+}
+
+pub trait SharedCast {
+    fn as_any(&self) -> SharedAny;
+    fn cast<U: Any + Send + Sync>(&self) -> Shared<U> where Self: Any + Send + Sync + Sized;
+}
+
+impl<T: ?Sized> SharedObject<T> for Shared<T> {
     #[inline]
-    pub fn get(&self) -> MutexGuard<'_, T> {
-        assert!(!self.0.deref().is_locked());
-        self.0.deref().lock()
+    fn get(&self) -> MutexGuard<'_, T> {
+        if self.is_locked() {
+            panic!("Attempted to access an already locked Shared<{}>", std::any::type_name::<T>());
+        }
+
+        self.lock()
+    }
+
+    #[inline]
+    fn ptr_eq(&self, other: &Shared<T>) -> bool {
+        Arc::ptr_eq(self, other)
     }
 }
 
-impl<T: ?Sized> Clone for Shared<T> {
-    fn clone(&self) -> Self {
-        Shared(self.0.clone())
+impl SharedCast for SharedAny {
+    fn as_any(&self) -> SharedAny {
+        self.clone()
+    }
+
+    fn cast<U: Any + Send + Sync>(&self) -> Shared<U> where Self: Any + Send + Sync + Sized {
+        match self.clone().downcast::<Mutex<U>>() {
+            Ok(shared) => shared,
+            Err(_) => panic!("Attempted to cast a Shared object to not corresponding type {}", std::any::type_name::<U>())
+        }
     }
 }
 
-impl<T: ?Sized> Shared<T> {
-    pub fn ptr_eq(&self, other: &Shared<T>) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+impl<T: Any + Send + Sync> SharedCast for Shared<T> {
+    fn as_any(&self) -> SharedAny {
+        self.clone()
+    }
+
+    fn cast<U: Any + Send + Sync>(&self) -> Shared<U> where Self: Any + Send + Sync + Sized {
+        self.as_any().cast()
     }
 }
-
-impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<Shared<U>> for Shared<T> {}

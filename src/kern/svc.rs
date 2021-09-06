@@ -1,6 +1,29 @@
+use scopeguard::{guard, ScopeGuard};
+use crate::kern::KAutoObject;
+use crate::kern::find_named_object;
+use crate::kern::ipc::KClientPort;
+use crate::kern::ipc::KPort;
+use crate::kern::proc::get_current_process;
+use crate::kern::register_named_object;
+use crate::kern::result;
 use crate::result::*;
-use crate::util;
+use crate::util::{self, SharedObject};
 use core::mem;
+
+pub type Handle = u32;
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[repr(u8)]
+pub enum LimitableResource {
+    PhysicalMemory = 0,
+    Thread = 1,
+    Event = 2,
+    TransferMemory = 3,
+    Session = 4
+}
+
+pub const CURRENT_THREAD_PSEUDO_HANDLE: Handle = 0xFFFF8000;
+pub const CURRENT_PROCESS_PSEUDO_HANDLE: Handle = 0xFFFF8001;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[repr(u8)]
@@ -176,10 +199,14 @@ impl BreakReason {
 
 // Note: the actual impl of SVCs would have (ptr, size) for args/bufs/strings, but Rust's slice, &str, etc. makes my life way easier here ;)
 
+pub fn sleep_thread(timeout: i64) -> Result<()> {
+    todo!("SleepThread with timeout={}", timeout);
+}
+
 pub fn break_(reason: BreakReason, arg: &[u8]) -> Result<()> {
     if reason.is_notification_only() {
         let actual_reason = reason.without_notification_flag();
-        println!("[Break] Notified, reason: {:?}", actual_reason);
+        log_line!("[Break] Notified, reason: {:?}", actual_reason);
     }
     else {
         if arg.len() == mem::size_of::<ResultCode>() {
@@ -195,6 +222,46 @@ pub fn break_(reason: BreakReason, arg: &[u8]) -> Result<()> {
 }
 
 pub fn output_debug_string(msg: &str) -> Result<()> {
-    println!("[OutputDebugString] {}", msg);
+    log_line!("[OutputDebugString] {}", msg);
     Ok(())
+}
+
+pub fn connect_to_named_port(name: &str) -> Result<Handle> {
+    result_return_unless!(name.len() <= 11, result::ResultOutOfRange);
+
+    let cur_process = get_current_process();
+    log_line!("[ConnectToNamedPort] connecting to port: '{}'", name);
+    let mut client_port = find_named_object::<KClientPort>(name)?;
+    let client_session_handle = cur_process.get().handle_table.allocate_handle()?;
+
+    let mut connect_fail_guard = guard((), |()| {
+        cur_process.get().handle_table.deallocate_handle(client_session_handle);
+    });
+    let client_session = KClientPort::connect(&mut client_port)?;
+    cur_process.get().handle_table.set_allocated_handle(client_session_handle, client_session.clone())?;
+
+    ScopeGuard::into_inner(connect_fail_guard);
+    client_session.get().decrement_refcount();
+    Ok(client_session_handle)
+}
+
+pub fn manage_named_port(name: &str, max_sessions: u32) -> Result<Handle> {
+    result_return_unless!(name.len() <= 11, result::ResultOutOfRange);
+
+    let port = KPort::new(max_sessions, false, 0);
+
+    let cur_process = get_current_process();
+    let server_port_handle = cur_process.get().handle_table.allocate_handle_set(port.get().server_port.clone())?;
+    
+    let mut register_name_fail_guard = guard((), |()| {
+        cur_process.get().handle_table.close_handle(server_port_handle);
+    });
+
+    log_line!("Client parent ptr: {:?}", port.get().client_port.get().parent.as_ref().unwrap().data_ptr() as usize);
+    log_line!("Server parent ptr: {:?}", port.get().server_port.get().parent.as_ref().unwrap().data_ptr() as usize);
+
+    register_named_object(port.get().client_port.clone(), name)?;
+
+    ScopeGuard::into_inner(register_name_fail_guard);
+    Ok(server_port_handle)
 }

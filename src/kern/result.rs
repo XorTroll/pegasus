@@ -1,5 +1,3 @@
-use crate::result::*;
-
 pub const RESULT_MODULE: u32 = 1;
 
 result_define_group!(RESULT_MODULE => {
