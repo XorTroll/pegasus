@@ -1,14 +1,21 @@
 use scopeguard::{guard, ScopeGuard};
 use crate::kern::KAutoObject;
+use crate::kern::KSynchronizationObject;
 use crate::kern::find_named_object;
 use crate::kern::ipc::KClientPort;
 use crate::kern::ipc::KPort;
 use crate::kern::proc::get_current_process;
 use crate::kern::register_named_object;
 use crate::kern::result;
+use crate::kern::thread::get_current_thread;
+use crate::kern::wait_for_sync_objects;
 use crate::result::*;
+use crate::util::Shared;
 use crate::util::{self, SharedObject};
 use core::mem;
+use std::time::Duration;
+
+use super::ipc::KClientSession;
 
 pub type Handle = u32;
 
@@ -200,7 +207,21 @@ impl BreakReason {
 // Note: the actual impl of SVCs would have (ptr, size) for args/bufs/strings, but Rust's slice, &str, etc. makes my life way easier here ;)
 
 pub fn sleep_thread(timeout: i64) -> Result<()> {
-    todo!("SleepThread with timeout={}", timeout);
+    match timeout {
+        0 => todo!("Yield"),
+        -1 => todo!("YieldWithLoadBalancing"),
+        -2 => todo!("YieldToAnyThread"),
+        timeout => {
+            let duration = Duration::from_nanos(timeout as u64);
+            log_line!("SleepThread with timeout = {}ns", duration.as_nanos());
+        }
+    };
+
+    Ok(())
+}
+
+pub fn close_handle(handle: Handle) -> Result<()> {
+    get_current_process().get().handle_table.close_handle(handle)
 }
 
 pub fn break_(reason: BreakReason, arg: &[u8]) -> Result<()> {
@@ -229,20 +250,42 @@ pub fn output_debug_string(msg: &str) -> Result<()> {
 pub fn connect_to_named_port(name: &str) -> Result<Handle> {
     result_return_unless!(name.len() <= 11, result::ResultOutOfRange);
 
-    let cur_process = get_current_process();
     log_line!("[ConnectToNamedPort] connecting to port: '{}'", name);
     let mut client_port = find_named_object::<KClientPort>(name)?;
-    let client_session_handle = cur_process.get().handle_table.allocate_handle()?;
+    let client_session_handle = get_current_process().get().handle_table.allocate_handle()?;
 
-    let mut connect_fail_guard = guard((), |()| {
-        cur_process.get().handle_table.deallocate_handle(client_session_handle);
+    let connect_fail_guard = guard((), |()| {
+        let _ = get_current_process().get().handle_table.deallocate_handle(client_session_handle);
     });
     let client_session = KClientPort::connect(&mut client_port)?;
-    cur_process.get().handle_table.set_allocated_handle(client_session_handle, client_session.clone())?;
+    get_current_process().get().handle_table.set_allocated_handle(client_session_handle, client_session.clone())?;
 
     ScopeGuard::into_inner(connect_fail_guard);
     client_session.get().decrement_refcount();
     Ok(client_session_handle)
+}
+
+pub fn send_sync_request(client_session_handle: Handle) -> Result<()> {
+    log_line!("SendSyncRequest with handle {:#X}", client_session_handle);
+    let client_session = get_current_process().get().handle_table.get_handle_obj::<KClientSession>(client_session_handle)?;
+    
+    let rc = client_session.get().send_sync_request(None, None);
+    rc
+}
+
+pub fn create_port(max_sessions: u32, is_light: bool, name_addr: u64) -> Result<(Handle, Handle)> {
+    let port = KPort::new(max_sessions, is_light, name_addr);
+
+    let server_port_handle = get_current_process().get().handle_table.allocate_handle_set(port.get().server_port.clone())?;
+
+    let alloc_client_handle_fail_guard = guard((), |()| {
+        let _ = get_current_process().get().handle_table.close_handle(server_port_handle);
+    });
+
+    let client_port_handle = get_current_process().get().handle_table.allocate_handle_set(port.get().client_port.clone())?;
+
+    ScopeGuard::into_inner(alloc_client_handle_fail_guard);
+    Ok((server_port_handle, client_port_handle))
 }
 
 pub fn manage_named_port(name: &str, max_sessions: u32) -> Result<Handle> {
@@ -250,18 +293,43 @@ pub fn manage_named_port(name: &str, max_sessions: u32) -> Result<Handle> {
 
     let port = KPort::new(max_sessions, false, 0);
 
-    let cur_process = get_current_process();
-    let server_port_handle = cur_process.get().handle_table.allocate_handle_set(port.get().server_port.clone())?;
+    let server_port_handle = get_current_process().get().handle_table.allocate_handle_set(port.get().server_port.clone())?;
     
-    let mut register_name_fail_guard = guard((), |()| {
-        cur_process.get().handle_table.close_handle(server_port_handle);
+    let register_name_fail_guard = guard((), |()| {
+        let _ = get_current_process().get().handle_table.close_handle(server_port_handle);
     });
-
-    log_line!("Client parent ptr: {:?}", port.get().client_port.get().parent.as_ref().unwrap().data_ptr() as usize);
-    log_line!("Server parent ptr: {:?}", port.get().server_port.get().parent.as_ref().unwrap().data_ptr() as usize);
 
     register_named_object(port.get().client_port.clone(), name)?;
 
     ScopeGuard::into_inner(register_name_fail_guard);
     Ok(server_port_handle)
+}
+
+pub fn connect_to_port(client_port_handle: Handle) -> Result<Handle> {
+    let mut client_port = get_current_process().get().handle_table.get_handle_obj::<KClientPort>(client_port_handle)?;
+    let client_session_handle = get_current_process().get().handle_table.allocate_handle()?;
+
+    let connect_fail_guard = guard((), |()| {
+        let _ = get_current_process().get().handle_table.deallocate_handle(client_session_handle);
+    });
+    let client_session = KClientPort::connect(&mut client_port)?;
+    get_current_process().get().handle_table.set_allocated_handle(client_session_handle, client_session.clone())?;
+
+    ScopeGuard::into_inner(connect_fail_guard);
+    client_session.get().decrement_refcount();
+    Ok(client_session_handle)
+}
+
+pub fn wait_synchronization(handles: &[Handle], timeout: i64) -> Result<usize> {
+    result_return_unless!(handles.len() <= 64, result::ResultOutOfRange);
+
+    let mut sync_objs: Vec<Shared<dyn KSynchronizationObject>> = Vec::with_capacity(handles.len());
+    for handle in handles {
+        let sync_obj = get_current_process().get().handle_table.get_handle_sync_obj(*handle)?;
+        // sync_obj.get().increment_refcount();
+
+        sync_objs.push(sync_obj);
+    }
+
+    wait_for_sync_objects(&mut sync_objs, timeout)
 }

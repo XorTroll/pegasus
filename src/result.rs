@@ -30,6 +30,10 @@ pub trait ResultBase {
         ResultCode::new(Self::get_value())
     }
 
+    fn make_err<T>() -> Result<T> {
+        Err(Self::make())
+    }
+
     fn matches(rc: ResultCode) -> bool {
         rc.get_value() == Self::get_value()
     }
@@ -50,6 +54,13 @@ impl ResultCode {
         match r {
             Ok(_) => ResultSuccess::make(),
             Err(rc) => rc
+        }
+    }
+
+    pub fn to<T>(&self, t: T) -> Result<T> {
+        match self.is_success() {
+            true => Ok(t),
+            false => Err(*self)
         }
     }
     
@@ -110,12 +121,6 @@ macro_rules! result_define_group {
     };
 }
 
-macro_rules! result_define_subgroup {
-    ($module:expr, $submodule:expr => { $( $name:ident: $description:expr ),* }) => {
-        result_define_group!($module => { $( $name: $submodule + $description ),* });
-    };
-}
-
 macro_rules! result_return_if {
     ($cond:expr, $res:ty) => {
         if $cond {
@@ -140,14 +145,14 @@ macro_rules! result_return_unless {
     };
 }
 
-macro_rules! result_try {
-    ($rc:expr) => {
-        if $rc.is_failure() {
-            return Err($rc);
-        }
-    };
-}
-
 result_define!(Success: 0, 0);
 
 pub type Result<T> = result::Result<T, ResultCode>;
+
+// Results
+
+pub const RESULT_MODULE: u32 = 503;
+
+result_define_group!(RESULT_MODULE => {
+    InvalidCast: 1
+});

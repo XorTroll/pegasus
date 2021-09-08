@@ -1,13 +1,14 @@
 use std::fmt;
-use std::marker::Unsize;
-use std::mem::ManuallyDrop;
-use std::ops::CoerceUnsized;
+use std::num::NonZeroUsize;
 use std::ptr;
 use std::any::Any;
 use std::sync::Arc;
-use std::ops::Deref;
-use parking_lot::lock_api::RawMutex as RawMutexTrait;
-use parking_lot::{Mutex, MutexGuard, RawMutex};
+use std::thread;
+use parking_lot::lock_api::{GetThreadId, RawReentrantMutex, RawMutex as RawMutexTrait};
+use parking_lot::{RawMutex, Mutex, MutexGuard};
+use crate::kern::proc::{get_current_process, has_current_process};
+use crate::kern::thread::{get_current_thread, has_current_thread};
+use crate::result;
 use crate::result::*;
 
 macro_rules! bit_enum {
@@ -90,44 +91,105 @@ macro_rules! read_bits {
     };
 }
 
-static mut G_LOG_LOCK: RawMutex = RawMutex::INIT;
+pub struct ThreadIdStub {}
 
-pub fn log_guard_lock() {
-    unsafe {
-        G_LOG_LOCK.lock();
+unsafe impl GetThreadId for ThreadIdStub {
+    const INIT: Self = ThreadIdStub {};
+
+    fn nonzero_thread_id(&self) -> NonZeroUsize {
+        // Note: would be cool to use KThread's ID, but this might be accessed from host threads without a KThread object, like the main thread of this project
+        NonZeroUsize::new(thread::current().id().as_u64().get() as usize).unwrap()
     }
 }
 
-pub fn log_guard_unlock() {
-    unsafe {
-        G_LOG_LOCK.unlock();
+pub type Lock = RawMutex;
+pub type RecursiveLock = RawReentrantMutex<RawMutex, ThreadIdStub>;
+
+pub struct LockGuard<'a> {
+    lock: &'a mut Lock
+}
+
+impl<'a> LockGuard<'a> {
+    pub fn new(lock: &'a mut Lock) -> Self {
+        lock.lock();
+
+        Self {
+            lock: lock
+        }
     }
+}
+
+impl<'a> Drop for LockGuard<'a> {
+    fn drop(&mut self) {
+        unsafe {
+            self.lock.unlock();
+        }
+    }
+}
+
+pub struct RecursiveLockGuard<'a> {
+    lock: &'a mut RecursiveLock
+}
+
+impl<'a> RecursiveLockGuard<'a> {
+    pub fn new(lock: &'a mut RecursiveLock) -> Self {
+        lock.lock();
+
+        Self {
+            lock: lock
+        }
+    }
+}
+
+impl<'a> Drop for RecursiveLockGuard<'a> {
+    fn drop(&mut self) {
+        unsafe {
+            self.lock.unlock();
+        }
+    }
+}
+
+pub const fn new_lock() -> Lock {
+    Lock::INIT
+}
+
+pub const fn new_recursive_lock() -> RecursiveLock {
+    RecursiveLock::INIT
+}
+
+static mut G_LOG_LOCK: RecursiveLock = new_recursive_lock();
+
+pub fn make_log_guard<'a>() -> RecursiveLockGuard<'a> {
+    unsafe {
+        RecursiveLockGuard::new(&mut G_LOG_LOCK)
+    }
+}
+
+pub fn log_line_msg(msg: String) {
+    let _guard = make_log_guard();
+
+    let process_name = match has_current_process() {
+        true => String::from(get_current_process().get().npdm.meta.name.get_str().unwrap()),
+        false => String::from("Host~pegasus")
+    };
+    let thread_name = match has_current_thread() {
+        true => String::from(get_current_thread().get().host_thread_handle.as_ref().unwrap().thread().name().unwrap()),
+        false => format!("Host~{}", std::thread::current().name().unwrap())
+    };
+
+    println!("[{} -> {}] {}", process_name, thread_name, msg);
 }
 
 #[macro_export]
 macro_rules! log_line {
-    ($($arg:tt)*) => {
-        {
-            $crate::util::log_guard_lock();
-
-            let log_msg = format!($($arg)*);
-            let process_name = match $crate::kern::proc::has_current_process() {
-                true => String::from($crate::util::SharedObject::get(&$crate::kern::proc::get_current_process()).npdm.meta.name.get_str().unwrap()),
-                false => String::from("Host~pegasus")
-            };
-            let thread_name = match $crate::kern::thread::has_current_thread() {
-                true => String::from($crate::util::SharedObject::get(&$crate::kern::thread::get_current_thread()).host_thread_handle.as_ref().unwrap().thread().name().unwrap()),
-                false => format!("Host~{}", std::thread::current().name().unwrap())
-            };
-
-            println!("[{} -> {}] {}", process_name, thread_name, log_msg);
-
-            $crate::util::log_guard_unlock();
-        }
-    };
+    ($($arg:tt)*) => {{
+        let log_msg = format!($($arg)*);
+        $crate::util::log_line_msg(log_msg);
+    }};
 }
 
-pub const fn align_up<V: Into<usize> + From<usize>>(value: V, size: usize) -> V {
+pub fn align_up<V: Into<usize> + From<usize>>(value: V, size: usize) -> V {
+    // TODO: make const?
     let mask = size - 1;
     V::from((value.into() + mask) & !mask)
 }
@@ -361,7 +423,7 @@ pub fn slice_read_data(slice: &[u8], offset: Option<usize>, len: usize) -> Resul
     let offset_val = offset.unwrap_or(0);
 
     // TODO
-    result_return_unless!((offset_val + len) <= slice.len(), 0xB);
+    result_return_unless!((offset_val + len) <= slice.len(), 0xBEEF);
     
     Ok(slice[offset_val..offset_val + len].to_vec())
 }
@@ -370,7 +432,7 @@ pub fn slice_read_val<T: Copy>(slice: &[u8], offset: Option<usize>) -> Result<T>
     let offset_val = offset.unwrap_or(0);
 
     // TODO
-    result_return_unless!((offset_val + core::mem::size_of::<T>()) <= slice.len(), 0xB);
+    result_return_unless!((offset_val + core::mem::size_of::<T>()) <= slice.len(), 0xBEEF);
     
     unsafe {
         let ptr = slice.as_ptr().offset(offset_val as isize) as *const T;
@@ -390,6 +452,16 @@ pub fn slice_read_data_advance(slice: &[u8], offset: &mut usize, len: usize) -> 
     Ok(data)
 }
 
+pub fn trailing_zero_count(val: u64) -> u64 {
+    for i in 0..64 {
+        if (val & bit!(i)) != 0 {
+            return i;
+        }
+    }
+
+    return 64;
+}
+
 pub type Shared<T> = Arc<Mutex<T>>;
 pub type SharedAny = Arc<dyn Any + Send + Sync>;
 
@@ -405,7 +477,7 @@ pub trait SharedObject<T: ?Sized> {
 
 pub trait SharedCast {
     fn as_any(&self) -> SharedAny;
-    fn cast<U: Any + Send + Sync>(&self) -> Shared<U> where Self: Any + Send + Sync + Sized;
+    fn cast<U: Any + Send + Sync>(&self) -> Result<Shared<U>> where Self: Any + Send + Sync + Sized;
 }
 
 impl<T: ?Sized> SharedObject<T> for Shared<T> {
@@ -424,15 +496,25 @@ impl<T: ?Sized> SharedObject<T> for Shared<T> {
     }
 }
 
+impl<T: Any + Send + Sync> SharedObject<T> for SharedAny {
+    fn get(&self) -> MutexGuard<'_, T> {
+        panic!("Attempted to get() from a SharedAny object");
+    }
+
+    fn ptr_eq(&self, other: &Shared<T>) -> bool {
+        Arc::ptr_eq(self, &other.as_any())
+    }
+}
+
 impl SharedCast for SharedAny {
     fn as_any(&self) -> SharedAny {
         self.clone()
     }
 
-    fn cast<U: Any + Send + Sync>(&self) -> Shared<U> where Self: Any + Send + Sync + Sized {
+    fn cast<U: Any + Send + Sync>(&self) -> Result<Shared<U>> where Self: Any + Send + Sync + Sized {
         match self.clone().downcast::<Mutex<U>>() {
-            Ok(shared) => shared,
-            Err(_) => panic!("Attempted to cast a Shared object to not corresponding type {}", std::any::type_name::<U>())
+            Ok(shared) => Ok(shared),
+            Err(_) => result::ResultInvalidCast::make_err()
         }
     }
 }
@@ -442,7 +524,7 @@ impl<T: Any + Send + Sync> SharedCast for Shared<T> {
         self.clone()
     }
 
-    fn cast<U: Any + Send + Sync>(&self) -> Shared<U> where Self: Any + Send + Sync + Sized {
+    fn cast<U: Any + Send + Sync>(&self) -> Result<Shared<U>> where Self: Any + Send + Sync + Sized {
         self.as_any().cast()
     }
 }

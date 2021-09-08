@@ -6,6 +6,8 @@
 #![feature(coerce_unsized)]
 #![feature(unsize)]
 #![feature(const_mut_refs)]
+#![feature(const_raw_ptr_deref)]
+#![feature(thread_id_value)]
 
 // For bit_enum enum names
 #![allow(non_snake_case)]
@@ -27,6 +29,8 @@ pub mod kern;
 pub mod fs;
 use fs::FileSystem;
 
+use crate::util::make_log_guard;
+
 pub mod ldr;
 
 pub mod emu;
@@ -38,20 +42,19 @@ fn main() -> result::Result<()> {
 
     let orig_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
-        // Invoke the default handler, guarding it to prevent other thread logs to mix with the default panic printing
-        util::log_guard_lock();
+        // Guard to prevent other thread logs to mix with the panic printing
+        let _guard = make_log_guard();
+
+        // Invoke the default panic handler
         orig_hook(panic_info);
-        util::log_guard_unlock();
 
         // Generate and print backtrace, guarding everything to stop other threads from logging
-        log_line!("A panic happened in this thread:");
-        util::log_guard_lock();
+        println!("A panic happened in this thread:");
         let backtrace = Backtrace::new();
         println!("{:?}", backtrace);
-        util::log_guard_unlock();
 
         // Exit everything, panic = unrecoverable error
-        log_line!("Exiting...");
+        println!("Exiting...");
         process::exit(1);
     }));
 
@@ -86,8 +89,6 @@ fn main() -> result::Result<()> {
         std::thread::sleep(std::time::Duration::from_secs(5));
         log_line!("HOSTMAIN 5 secs elapsed");
     }
-
-    log_line!("Done!");
 
     Ok(())
 }

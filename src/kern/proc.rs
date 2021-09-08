@@ -4,10 +4,12 @@ use crate::emu::cpu;
 use crate::ldr::npdm::NpdmData;
 use crate::util::{Shared, SharedObject, SharedAny, SharedCast, make_shared};
 use crate::result::*;
+use crate::result as lib_result;
 use super::KAutoObject;
 use super::KResourceLimit;
 use super::KSynchronizationObject;
-use super::thread::KThread;
+use super::ipc::{KClientPort, KClientSession, KServerPort, KServerSession};
+use super::thread::{KThread, try_get_current_thread};
 use super::thread::get_current_thread;
 use super::svc::LimitableResource;
 use super::svc::Handle;
@@ -100,7 +102,7 @@ impl KHandleTable {
             }
         }
 
-        Err(result::ResultOutOfHandles::make())
+        result::ResultOutOfHandles::make_err()
     }
 
     pub fn allocate_handle(&mut self) -> Result<Handle> {
@@ -126,7 +128,7 @@ impl KHandleTable {
             }
         }
 
-        Err(result::ResultOutOfHandles::make())
+        result::ResultOutOfHandles::make_err()
     }
 
     pub fn set_allocated_handle<K: KAutoObject + 'static>(&mut self, handle: Handle, obj: Shared<K>) -> Result<()> {
@@ -171,7 +173,7 @@ impl KHandleTable {
         Ok(())
     }
 
-    pub fn get_handle_obj<T: KAutoObject + 'static>(&self, handle: Handle) -> Result<Shared<T>> {
+    pub fn get_handle_obj_any(&self, handle: Handle) -> Result<SharedAny> {
         let (idx, linear_id) = Self::decode_handle(handle);
         let entry_table = self.entry_table.lock();
 
@@ -179,7 +181,41 @@ impl KHandleTable {
         result_return_unless!(entry.linear_id == linear_id, result::ResultInvalidHandle);
         result_return_unless!(entry.obj.is_some(), result::ResultInvalidHandle);
 
-        Ok(entry.obj.as_ref().unwrap().cast::<T>())
+        Ok(entry.obj.as_ref().unwrap().clone())
+    }
+    
+    #[inline]
+    pub fn get_handle_obj<K: KAutoObject + 'static>(&self, handle: Handle) -> Result<Shared<K>> {
+        self.get_handle_obj_any(handle)?.cast::<K>()
+    }
+
+    pub fn get_handle_sync_obj(&self, handle: Handle) -> Result<Shared<dyn KSynchronizationObject>> {
+        // Due to how great Rust is with downcasting, we have to do this with all KSynchronizationObject types. Luckily there aren't that many of them...
+        let obj = self.get_handle_obj_any(handle)?;
+
+        if let Ok(thread) = obj.cast::<KThread>() {
+            return Ok(thread);
+        }
+
+        if let Ok(process) = obj.cast::<KProcess>() {
+            return Ok(process);
+        }
+
+        if let Ok(server_port) = obj.cast::<KServerPort>() {
+            return Ok(server_port);
+        }
+        if let Ok(client_port) = obj.cast::<KClientPort>() {
+            return Ok(client_port);
+        }
+
+        if let Ok(server_session) = obj.cast::<KServerSession>() {
+            return Ok(server_session);
+        }
+        if let Ok(client_session) = obj.cast::<KClientSession>() {
+            return Ok(client_session);
+        }
+
+        lib_result::ResultInvalidCast::make_err()
     }
 }
 
@@ -250,13 +286,27 @@ impl KProcess {
     }
 }
 
+#[inline]
 pub fn has_current_process() -> bool {
-    match has_current_thread() {
-        true => get_current_thread().get().owner_process.is_some(),
-        false => false
+    if let Some(thread) = try_get_current_thread() {
+        thread.get().owner_process.is_some()
+    }
+    else {
+        false
     }
 }
 
+#[inline]
+pub fn try_get_current_process() -> Option<Shared<KProcess>> {
+    if let Some(thread) = try_get_current_thread() {
+        thread.get().owner_process.clone()
+    }
+    else {
+        None
+    }
+}
+
+#[inline]
 pub fn get_current_process() -> Shared<KProcess> {
     assert!(has_current_process());
 

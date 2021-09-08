@@ -1,9 +1,10 @@
-use std::mem::MaybeUninit;
 use std::sync::atomic::AtomicI32;
 use scopeguard::{guard, ScopeGuard};
 use super::KAutoObject;
 use super::KSynchronizationObject;
 use super::thread::KThread;
+use super::thread::ThreadState;
+use super::thread::get_current_thread;
 use super::thread::make_critical_section_guard;
 use super::proc::get_current_process;
 use crate::util::{Shared, SharedObject, make_shared};
@@ -53,6 +54,12 @@ impl KPort {
         port
     }
 
+    pub fn ready_for_drop(&mut self) {
+        // Need to do this for the Shareds to actually drop
+        self.server_port.get().parent = None;
+        self.client_port.get().parent = None;
+    }
+
     #[inline]
     pub fn enqueue_incoming_session(&mut self, session: Shared<KServerSession>) {
         KServerPort::enqueue_incoming_session(&mut self.server_port, session)
@@ -64,6 +71,12 @@ impl KPort {
     }
 }
 
+impl Drop for KPort {
+    fn drop(&mut self) {
+        println!("Dropping KPort!");
+    }
+}
+
 // ---
 
 // KServerPort
@@ -72,7 +85,7 @@ pub struct KServerPort {
     refcount: AtomicI32,
     waiting_threads: Vec<Shared<KThread>>,
     pub parent: Option<Shared<KPort>>,
-    is_light: bool,
+    pub is_light: bool,
     incoming_connections: Vec<Shared<KServerSession>>,
     incoming_light_connections: Vec<Shared<KLightServerSession>>
 }
@@ -109,7 +122,7 @@ impl KServerPort {
     }
 
     pub fn enqueue_incoming_session(server_port: &mut Shared<KServerPort>, session: Shared<KServerSession>) {
-        let _ = make_critical_section_guard();
+        let _guard = make_critical_section_guard();
 
         let is_first_session = server_port.get().incoming_connections.is_empty();
         server_port.get().incoming_connections.push(session);
@@ -120,7 +133,7 @@ impl KServerPort {
     }
 
     pub fn enqueue_incoming_light_session(server_port: &mut Shared<KServerPort>, session: Shared<KLightServerSession>) {
-        let _ = make_critical_section_guard();
+        let _guard = make_critical_section_guard();
 
         let is_first_light_session = server_port.get().incoming_light_connections.is_empty();
         server_port.get().incoming_light_connections.push(session);
@@ -131,7 +144,7 @@ impl KServerPort {
     }
 
     pub fn accept_incoming_connection(&mut self) -> Option<Shared<KServerSession>> {
-        let _ = make_critical_section_guard();
+        let _guard = make_critical_section_guard();
 
         let session = match self.incoming_connections.first() {
             Some(session_ref) => Some(session_ref.clone()),
@@ -146,7 +159,7 @@ impl KServerPort {
     }
 
     pub fn accept_incoming_light_connection(&mut self) -> Option<Shared<KLightServerSession>> {
-        let _ = make_critical_section_guard();
+        let _guard = make_critical_section_guard();
 
         let session = match self.incoming_light_connections.first() {
             Some(session_ref) => Some(session_ref.clone()),
@@ -158,6 +171,12 @@ impl KServerPort {
         }
 
         session
+    }
+}
+
+impl Drop for KServerPort {
+    fn drop(&mut self) {
+        println!("Dropping KServerPort!");
     }
 }
 
@@ -200,7 +219,7 @@ impl KClientPort {
         result_return_unless!(client_port.get().parent.is_some(), result::ResultInvalidState);
         get_current_process().get().resource_limit.get().reserve(svc::LimitableResource::Session, 1, None)?;
 
-        let mut connect_fail_guard = guard((), |()| {
+        let connect_fail_guard = guard((), |()| {
             get_current_process().get().resource_limit.get().release(svc::LimitableResource::Session, 1, 1);
         });
 
@@ -218,6 +237,12 @@ impl KClientPort {
     }
 }
 
+impl Drop for KClientPort {
+    fn drop(&mut self) {
+        println!("Dropping KClientPort!");
+    }
+}
+
 // ---
 
 // KSession
@@ -225,7 +250,8 @@ impl KClientPort {
 pub struct KSession {
     refcount: AtomicI32,
     server_session: Shared<KServerSession>,
-    client_session: Shared<KClientSession>
+    client_session: Shared<KClientSession>,
+    state: ChannelState
 }
 
 impl KAutoObject for KSession {
@@ -242,7 +268,8 @@ impl KSession {
         let session = make_shared(Self {
             refcount: AtomicI32::new(1),
             server_session: server_session.clone(),
-            client_session: client_session.clone()
+            client_session: client_session.clone(),
+            state: ChannelState::Open
         });
 
         server_session.get().parent = Some(session.clone());
@@ -250,10 +277,9 @@ impl KSession {
         session
     }
 
-    pub fn disconnect_client(&self) {
-        let client_state = self.client_session.get().state;
-        if client_state == ChannelState::Open {
-            self.client_session.get().state = ChannelState::ClientDisconnected;
+    pub fn disconnect_client(&mut self) {
+        if self.state == ChannelState::Open {
+            self.state = ChannelState::ClientDisconnected;
 
             self.server_session.get().cancel_all_requests_due_to_client_disconnect();
         }
@@ -268,7 +294,7 @@ pub struct KServerSession {
     refcount: AtomicI32,
     waiting_threads: Vec<Shared<KThread>>,
     parent: Option<Shared<KSession>>,
-    requests: Vec<Shared<KSessionRequest>>,
+    requests: Vec<KSessionRequest>,
     active_request: Option<Shared<KSessionRequest>>
 }
 
@@ -293,7 +319,7 @@ impl KSynchronizationObject for KServerSession {
 
     fn is_signaled(&self) -> bool {
         if let Some(session) = self.parent.as_ref() {
-            let client_session_state = session.get().client_session.get().state;
+            let client_session_state = session.get().state;
             if client_session_state != ChannelState::Open {
                 return true;
             }
@@ -320,6 +346,26 @@ impl KServerSession {
     pub fn cancel_all_requests_due_to_client_disconnect(&self) {
         todo!("cancel_all_requests_due_to_client_disconnect");
     }
+
+    pub fn enqueue_request(server_session: &mut Shared<KServerSession>, mut request: KSessionRequest) -> Result<()> {
+        // TODO: check client session state
+
+        /* if async event = None: */
+        {
+            result_return_if!(request.client_thread.get().is_termination_requested(), result::ResultTerminationRequested);
+            KThread::reschedule(&mut request.client_thread, ThreadState::Waiting);
+        }
+        /* Else, do nothing */
+
+        let is_first_request = server_session.get().requests.is_empty();
+        server_session.get().requests.push(request);
+
+        if is_first_request {
+            KSynchronizationObject::signal(server_session);
+        }
+
+        Ok(())
+    }
 }
 
 // ---
@@ -330,8 +376,7 @@ pub struct KClientSession {
     refcount: AtomicI32,
     waiting_threads: Vec<Shared<KThread>>,
     parent: Option<Shared<KSession>>,
-    parent_port: Option<Shared<KClientPort>>,
-    pub state: ChannelState
+    parent_port: Option<Shared<KClientPort>>
 }
 
 impl KAutoObject for KClientSession {
@@ -365,9 +410,27 @@ impl KClientSession {
             refcount: AtomicI32::new(1),
             waiting_threads: Vec::new(),
             parent: parent,
-            parent_port: parent_port,
-            state: ChannelState::Open
+            parent_port: parent_port
         })
+    }
+
+    pub fn send_sync_request(&mut self, custom_cmd_buf_addr: Option<u64>, custom_cmd_buf_size: Option<usize>) -> Result<()> {
+        let request = KSessionRequest::new(get_current_thread(), custom_cmd_buf_addr, custom_cmd_buf_size);
+
+        {
+            let _guard = make_critical_section_guard();
+
+            get_current_thread().get().signaled_obj = None;
+            get_current_thread().get().sync_result = ResultSuccess::make();
+
+            let mut server_session = self.parent.as_ref().unwrap().get().server_session.clone();
+            KServerSession::enqueue_request(&mut server_session, request)?;
+
+            log_line!("Leaving KCriticalSection!");
+        }
+        log_line!("Left KCriticalSection!");
+
+        get_current_thread().get().sync_result.to(())
     }
 }
 
@@ -418,7 +481,19 @@ impl KAutoObject for KLightClientSession {
 // KSessionRequest
 
 pub struct KSessionRequest {
+    pub client_thread: Shared<KThread>,
+    pub custom_cmd_buf_addr: Option<u64>,
+    pub custom_cmd_buf_size: Option<usize>
+}
 
+impl KSessionRequest {
+    pub fn new(client_thread: Shared<KThread>, custom_cmd_buf_addr: Option<u64>, custom_cmd_buf_size: Option<usize>) -> Self {
+        Self {
+            client_thread: client_thread,
+            custom_cmd_buf_addr: custom_cmd_buf_addr,
+            custom_cmd_buf_size: custom_cmd_buf_size
+        }
+    }
 }
 
 // ---

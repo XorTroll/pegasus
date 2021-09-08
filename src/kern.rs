@@ -1,5 +1,3 @@
-use core::time;
-use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
@@ -49,6 +47,7 @@ pub trait KAutoObject: Send + Sync {
     }
 
     fn destroy(&mut self) {
+        println!("DESTROY");
     }
 }
 
@@ -59,22 +58,40 @@ pub fn register_named_object<K: KAutoObject + 'static>(obj: Shared<K>, name: &st
         let name_s = String::from(name);
         let mut named_object_table = G_NAMED_OBJECT_TABLE.lock();
 
-        // TODO
-        result_return_unless!(!named_object_table.contains_key(&name_s), 0xBABA);
+        result_return_unless!(!named_object_table.contains_key(&name_s), result::ResultInvalidState);
 
         named_object_table.insert(name_s, obj.as_any());
         Ok(())
     }
 }
 
-pub fn remove_named_object(name: &str) -> Result<()> {
+pub fn remove_named_object_by_name(name: &str) -> Result<()> {
     unsafe {
         let name_s = String::from(name);
         let mut named_object_table = G_NAMED_OBJECT_TABLE.lock();
-        // TODO
-        result_return_unless!(named_object_table.contains_key(&name_s), 0xBABA);
+        
+        result_return_unless!(named_object_table.contains_key(&name_s), result::ResultInvalidState);
         
         named_object_table.remove(&name_s);
+        Ok(())
+    }
+}
+
+pub fn remove_named_object_by_obj<K: KAutoObject + 'static>(obj: &Shared<K>) -> Result<()> {
+    unsafe {
+        let mut named_object_table = G_NAMED_OBJECT_TABLE.lock();
+
+        let mut obj_name: Option<String> = None;
+        for (name, named_obj) in named_object_table.iter() {
+            if named_obj.ptr_eq(obj) {
+                obj_name = Some(name.clone());
+                break;
+            }
+        }
+
+        result_return_unless!(obj_name.is_some(), result::ResultNotFound);
+
+        named_object_table.remove(obj_name.as_ref().unwrap());
         Ok(())
     }
 }
@@ -82,14 +99,13 @@ pub fn remove_named_object(name: &str) -> Result<()> {
 pub fn find_named_object<K: KAutoObject + 'static>(name: &str) -> Result<Shared<K>> {
     unsafe {
         let name_s = String::from(name);
-        let mut named_object_table = G_NAMED_OBJECT_TABLE.lock();
+        let named_object_table = G_NAMED_OBJECT_TABLE.lock();
 
         if let Some(obj) = named_object_table.get(&name_s) {
-            Ok(obj.cast::<K>())
+            obj.cast::<K>()
         }
         else {
-            // TODO
-            Err(ResultCode::new(0xBABA))
+            result::ResultNotFound::make_err()
         }
     }
 }
@@ -116,13 +132,15 @@ pub trait KSynchronizationObject : KAutoObject {
     }
 
     fn signal(obj: &mut Shared<Self>) where Self: 'static + Sized + Send + Sync {
-        let _ = make_critical_section_guard();
+        let _guard = make_critical_section_guard();
 
         if obj.get().is_signaled() {
             let obj_clone = obj.clone();
             for wait_thread in obj.get().get_waiting_threads() {
                 if wait_thread.get().state.get_low_flags() == ThreadState::Waiting {
                     wait_thread.get().signaled_obj = Some(obj_clone.clone());
+                    wait_thread.get().sync_result = ResultSuccess::make();
+                    
                     KThread::reschedule(wait_thread, ThreadState::Runnable);
                 }
             }
@@ -134,7 +152,7 @@ pub trait KSynchronizationObject : KAutoObject {
     }
 }
 
-pub fn wait_for_sync_objects(objs: &mut [Shared<dyn KSynchronizationObject + Send + Sync>], timeout: i64) -> Result<usize> {
+pub fn wait_for_sync_objects(objs: &mut [Shared<dyn KSynchronizationObject>], timeout: i64) -> Result<usize> {
     get_critical_section().enter();
 
     for i in 0..objs.len() {
@@ -148,18 +166,20 @@ pub fn wait_for_sync_objects(objs: &mut [Shared<dyn KSynchronizationObject + Sen
 
     if timeout == 0 {
         get_critical_section().leave();
-        return Err(result::ResultTimedOut::make());
+        return result::ResultTimedOut::make_err();
     }
 
     let mut cur_thread = thread::get_current_thread();
 
-    if cur_thread.get().should_be_terminated || (cur_thread.get().state == ThreadState::Terminated) {
+    let should_be_terminated = cur_thread.get().should_be_terminated;
+    let cur_state = cur_thread.get().state;
+    if should_be_terminated || (cur_state == ThreadState::Terminated) {
         get_critical_section().leave();
-        return Err(result::ResultTerminationRequested::make());
+        return result::ResultTerminationRequested::make_err();
     }
     else if cur_thread.get().sync_cancelled {
         get_critical_section().leave();
-        return Err(result::ResultCancelled::make());
+        return result::ResultCancelled::make_err();
     }
     else {
         let mut thread_idxs: Vec<usize> = Vec::with_capacity(objs.len());
@@ -169,11 +189,12 @@ pub fn wait_for_sync_objects(objs: &mut [Shared<dyn KSynchronizationObject + Sen
 
         cur_thread.get().waiting_sync = true;
         cur_thread.get().signaled_obj = None;
+        cur_thread.get().sync_result = result::ResultTimedOut::make();
         
         KThread::reschedule(&mut cur_thread, ThreadState::Waiting);
 
         if timeout > 0 {
-            // ScheduleFutureInvocation
+            todo!("ScheduleFutureInvocation");
         }
 
         get_critical_section().leave();
@@ -181,8 +202,10 @@ pub fn wait_for_sync_objects(objs: &mut [Shared<dyn KSynchronizationObject + Sen
         cur_thread.get().waiting_sync = false;
 
         if timeout > 0 {
-            // UnscheduleFutureInvocation
+            todo!("UnscheduleFutureInvocation");
         }
+
+        cur_thread.get().sync_result.to(0)?;
 
         get_critical_section().enter();
 
@@ -202,7 +225,7 @@ pub fn wait_for_sync_objects(objs: &mut [Shared<dyn KSynchronizationObject + Sen
     }
 
     get_critical_section().leave();
-    return Err(result::ResultTimedOut::make());
+    result::ResultTimedOut::make_err()
 }
 
 // ---
@@ -263,7 +286,7 @@ impl KTimeManager {
         let time_manager = get_time_manager();
         loop {
             let next = {
-                let _ = make_critical_section_guard();
+                let _guard = make_critical_section_guard();
 
                 time_manager.waiting_objs.sort_by(|(_, a), (_, b)| a.cmp(b));
                 time_manager.waiting_objs.first()
@@ -276,7 +299,7 @@ impl KTimeManager {
                 }
                 
                 if Instant::now() >= *next_instant {
-                    let _ = make_critical_section_guard();
+                    let _guard = make_critical_section_guard();
 
                     for i in 0..time_manager.waiting_objs.len() {
                         let (obj, _) = &time_manager.waiting_objs[i];
@@ -303,7 +326,7 @@ impl KTimeManager {
     }
 
     pub fn unschedule_future_invocation(&mut self, obj: Shared<dyn KFutureSchedulerObject>) {
-        let _ = make_critical_section_guard();
+        let _guard = make_critical_section_guard();
 
         self.waiting_objs.retain(|(wait_obj, _)| !obj.ptr_eq(wait_obj));
     }

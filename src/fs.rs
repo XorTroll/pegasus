@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 use std::fs::{self, DirEntry, File as StdFile, OpenOptions};
-use std::io::{Read, Result as IoResult, Seek, SeekFrom, Write};
+use std::io::{ErrorKind, Read, Result as IoResult, Seek, SeekFrom, Write};
 use crate::util;
 use crate::util::{Shared, SharedObject, make_shared};
 use crate::result::*;
+
+pub mod result;
 
 bit_enum! {
     CreateOption (u32) {
@@ -129,8 +131,12 @@ pub trait FileSystem {
 
 fn convert_io_result<T>(r: IoResult<T>) -> Result<T> {
     r.map_err(|err| match err.kind() {
-        // TODO
-        _ => ResultCode::new(888)
+        // TODO: finish
+        ErrorKind::NotFound => result::ResultPathNotFound::make(),
+        ErrorKind::PermissionDenied => result::ResultTargetLocked::make(),
+        ErrorKind::WouldBlock => result::ResultTargetLocked::make(),
+        ErrorKind::UnexpectedEof => result::ResultOutOfRange::make(),
+        _ => result::ResultNotImplemented::make()
     })
 }
 

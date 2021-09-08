@@ -642,7 +642,7 @@ impl KernelCapabilityData {
                 })
             }
             else {
-                return Err(result::ResultUnknownCapability::make());
+                return result::ResultUnknownCapability::make_err();
             }
         }
 
