@@ -56,19 +56,19 @@ impl KCriticalSection {
             let cur_thread = try_get_current_thread();
 
             let is_cur_thread_schedulable = match cur_thread.as_ref() {
-				Some(thread) => thread.get().is_schedulable,
-				None => false
-			};
+                Some(thread) => thread.get().is_schedulable,
+                None => false
+            };
             if is_cur_thread_schedulable {
-				// log_line!("Enable scheduling...");
+                // log_line!("Enable scheduling...");
                 KScheduler::enable_scheduling(scheduled_cores_mask);
             }
             else {
                 KScheduler::enable_scheduling_from_foreign_thread(scheduled_cores_mask);
 
-				if let Some(thread) = cur_thread.as_ref() {
-					/* If exec ctx running: */ thread.get().scheduler_wait_event.wait();
-				}
+                if let Some(thread) = cur_thread.as_ref() {
+                    /* If exec ctx running: */ thread.get().scheduler_wait_event.wait();
+                }
             }
         }
         else {
@@ -186,7 +186,7 @@ pub struct KThread {
     waiting_threads: Vec<Shared<KThread>>,
     has_exited: bool,
     pub is_schedulable: bool,
-	force_pause_state: ThreadState,
+    force_pause_state: ThreadState,
     pub sync_result: ResultCode,
     base_priority: i32,
     pub scheduler_wait_event: ManualResetEvent,
@@ -261,7 +261,7 @@ impl KThread {
             siblings_per_core.push(None);
         }
 
-		// TODO: force pause flags if owner paused...
+        // TODO: force pause flags if owner paused...
 
         Ok(make_shared(Self {
             refcount: AtomicI32::new(1),
@@ -269,7 +269,7 @@ impl KThread {
             has_exited: false,
             should_be_terminated: false,
             is_schedulable: true,
-			force_pause_state: ThreadState::Initialized,
+            force_pause_state: ThreadState::Initialized,
             sync_result: ResultSuccess::make(),
             base_priority: priority,
             scheduler_wait_event: ManualResetEvent::new(State::Unset),
@@ -298,24 +298,24 @@ impl KThread {
         Self::new(owner_process, host_thread_name, priority, cpu_core, None)
     }
 
-	fn set_new_state(thread: &mut Shared<KThread>, new_flags: ThreadState) {
-		let _guard = make_critical_section_guard();
+    fn set_new_state(thread: &mut Shared<KThread>, new_flags: ThreadState) {
+        let _guard = make_critical_section_guard();
 
-		let old_flags = thread.get().state;
-		thread.get().state.update_flags(new_flags);
+        let old_flags = thread.get().state;
+        thread.get().state.update_flags(new_flags);
 
-		if old_flags.get_low_flags() != new_flags {
-			Self::adjust_scheduling(thread, old_flags);
-		}
-	}
+        if old_flags.get_low_flags() != new_flags {
+            Self::adjust_scheduling(thread, old_flags);
+        }
+    }
 
     fn adjust_scheduling(thread: &mut Shared<KThread>, old_state_flags: ThreadState) {
-		let cur_state = thread.get().state;
+        let cur_state = thread.get().state;
         if old_state_flags == cur_state {
             return;
         }
 
-		let is_not_schedulable = !thread.get().is_schedulable;
+        let is_not_schedulable = !thread.get().is_schedulable;
         if is_not_schedulable {
             // TODO: ensure thread is started...?
 
@@ -329,9 +329,9 @@ impl KThread {
             return;
         }
 
-		let active_core = thread.get().active_core;
-		let priority = thread.get().priority;
-		let affinity_mask = thread.get().affinity_mask;
+        let active_core = thread.get().active_core;
+        let priority = thread.get().priority;
+        let affinity_mask = thread.get().affinity_mask;
 
         if old_state_flags == ThreadState::Runnable {
             if active_core >= 0 {
@@ -356,7 +356,7 @@ impl KThread {
             }
         }
 
-		set_thread_reselection_requested(true);
+        set_thread_reselection_requested(true);
     }
 
     pub fn reschedule(thread: &mut Shared<KThread>, new_state_flags: ThreadState) {
@@ -387,63 +387,63 @@ impl KThread {
         reset_current_thread();
     }
 
-	fn do_start<F: FnOnce() + Send + 'static>(thread: &mut Shared<KThread>, f: F) -> Result<()> {
-		/* if kern not initialized, <...> */
+    fn do_start<F: FnOnce() + Send + 'static>(thread: &mut Shared<KThread>, f: F) -> Result<()> {
+        /* if kern not initialized, <...> */
 
-		let _guard = make_critical_section_guard();
+        let _guard = make_critical_section_guard();
 
-		let should_be_terminated = thread.get().should_be_terminated;
-		if !should_be_terminated {
-			let cur_thread = try_get_current_thread();
-			
-			loop {
-				let cur_state = thread.get().state;
+        let should_be_terminated = thread.get().should_be_terminated;
+        if !should_be_terminated {
+            let cur_thread = try_get_current_thread();
+            
+            loop {
+                let cur_state = thread.get().state;
 
-				if cur_state == ThreadState::Terminated {
-					break;
-				}
+                if cur_state == ThreadState::Terminated {
+                    break;
+                }
 
-				if let Some(cur_thread) = cur_thread.as_ref() {
-					if cur_thread.get().is_termination_requested() {
-						break;
-					}
-				}
+                if let Some(cur_thread) = cur_thread.as_ref() {
+                    if cur_thread.get().is_termination_requested() {
+                        break;
+                    }
+                }
 
-				result_return_unless!(cur_state.get_low_flags() == ThreadState::Initialized, result::ResultInvalidState);
-				
-				if cur_thread.is_none() || (cur_thread.as_ref().unwrap().get().force_pause_state == ThreadState::Initialized) {
-					let force_pause_state = thread.get().force_pause_state;
-					if thread.get().owner_process.is_some() && (force_pause_state != ThreadState::Initialized) {
-						todo!("CombineForcePauseFlags");
-					}
+                result_return_unless!(cur_state.get_low_flags() == ThreadState::Initialized, result::ResultInvalidState);
+                
+                if cur_thread.is_none() || (cur_thread.as_ref().unwrap().get().force_pause_state == ThreadState::Initialized) {
+                    let force_pause_state = thread.get().force_pause_state;
+                    if thread.get().owner_process.is_some() && (force_pause_state != ThreadState::Initialized) {
+                        todo!("CombineForcePauseFlags");
+                    }
 
-					Self::set_new_state(thread, ThreadState::Runnable);
+                    Self::set_new_state(thread, ThreadState::Runnable);
 
-					let builder = thread.get().host_thread_builder.take();
-					thread.get().host_thread_handle = Some(builder.unwrap().spawn(f).unwrap());
+                    let builder = thread.get().host_thread_builder.take();
+                    thread.get().host_thread_handle = Some(builder.unwrap().spawn(f).unwrap());
 
-					return Ok(());
-				}
-			}
-		}
+                    return Ok(());
+                }
+            }
+        }
 
-		result::ResultTerminationRequested::make_err()
-	}
+        result::ResultTerminationRequested::make_err()
+    }
 
     pub fn start_exec<T: Copy + Send + Sync + 'static, U: Copy + Send + Sync + 'static>(thread: &mut Shared<KThread>, arg_x0: T, arg_x1: U) -> Result<()> {
         result_return_unless!(thread.get().host_thread_builder.is_some(), 0x1);
 
         let thread_entry_clone = thread.clone();
-		Self::do_start(thread, move || {
+        Self::do_start(thread, move || {
             Self::exec_thread_fn(thread_entry_clone, arg_x0, arg_x1);
         })
     }
 
     pub fn start_host<F: FnOnce() + Send + 'static>(thread: &mut Shared<KThread>, f: F) -> Result<()> {
-		result_return_unless!(thread.get().host_thread_builder.is_some(), 0x1);
+        result_return_unless!(thread.get().host_thread_builder.is_some(), 0x1);
 
         let thread_entry_clone = thread.clone();
-		Self::do_start(thread, move || {
+        Self::do_start(thread, move || {
             Self::host_thread_fn(thread_entry_clone, f);
         })
     }
@@ -789,7 +789,7 @@ impl KScheduler {
     fn pick_next_thread(&mut self, mut selected_thread: Option<Shared<KThread>>) -> Shared<KThread> {
         loop {
             if let Some(thread) = selected_thread.as_ref() {
-				let thread_ctx_locked = thread.get().ctx.lock();
+                let thread_ctx_locked = thread.get().ctx.lock();
                 if thread_ctx_locked {
                     self.switch_to(Some(thread.clone()));
                     if !*self.needs_scheduling.lock() {
@@ -885,7 +885,7 @@ impl KScheduler {
     }
 
     fn select_thread(&mut self, next_thread: Option<Shared<KThread>>) -> u64 {
-		let mut prev_selected_thread = self.selected_thread.lock();
+        let mut prev_selected_thread = self.selected_thread.lock();
 
         let threads_match = match next_thread.is_some() && prev_selected_thread.is_some() {
             true => next_thread.as_ref().unwrap().ptr_eq(prev_selected_thread.as_ref().unwrap()),
@@ -968,8 +968,8 @@ impl KScheduler {
         let cur_core = get_current_thread().get().cur_core;
         let cur_scheduler = get_scheduler(cur_core);
 
-		cur_scheduler.reschedule_other_cores_self(scheduled_cores_mask);
-		cur_scheduler.reschedule_current_core();
+        cur_scheduler.reschedule_other_cores_self(scheduled_cores_mask);
+        cur_scheduler.reschedule_current_core();
     }
 
     pub fn enable_scheduling_from_foreign_thread(scheduled_cores_mask: u64) {
@@ -997,7 +997,7 @@ impl KScheduler {
 
     fn reschedule_current_core(&mut self) {
         if *self.needs_scheduling.lock() {
-			self.schedule();
+            self.schedule();
         }
     }
 }
