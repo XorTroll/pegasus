@@ -2,7 +2,7 @@ use std::sync::atomic::AtomicI32;
 use parking_lot::Mutex;
 use crate::emu::cpu;
 use crate::ldr::npdm::NpdmData;
-use crate::util::{Shared, SharedObject, SharedAny, SharedCast, make_shared};
+use crate::util::{Shared, SharedAny};
 use crate::result::*;
 use crate::result as lib_result;
 use super::KAutoObject;
@@ -16,7 +16,6 @@ use super::svc::Handle;
 use super::svc::CURRENT_PROCESS_PSEUDO_HANDLE;
 use super::svc::CURRENT_THREAD_PSEUDO_HANDLE;
 use super::result;
-use super::thread::has_current_thread;
 
 // KHandleTableEntry
 
@@ -258,7 +257,7 @@ impl KProcess {
         resource_limit.get().set_limit_value(LimitableResource::TransferMemory, 128)?;
         resource_limit.get().set_limit_value(LimitableResource::Session, 894)?;
 
-        Ok(make_shared(Self {
+        Ok(Shared::new(Self {
             refcount: AtomicI32::new(1),
             waiting_threads: Vec::new(),
             cpu_ctx: cpu_ctx,

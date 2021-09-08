@@ -2,7 +2,7 @@ use unicorn::{RegisterARM64, Engine, Handle};
 use unicorn::unicorn_const::{Arch, Mode, Permission};
 use std::boxed::Box;
 use std::ffi::c_void;
-use crate::util::{self, SharedObject};
+use crate::util;
 use crate::result::*;
 use crate::emu::kern as emu_kern;
 use crate::kern::thread::{self, get_scheduler};
@@ -166,8 +166,8 @@ pub struct ExecutionContext {
     uc_intr_hook: UnicornHook,
     pub exec_start_addr: u64,
     pub exec_end_addr: u64,
-    stack: MemoryRegion,
-    tlr: MemoryRegion
+    pub stack: MemoryRegion,
+    pub tlr: MemoryRegion
 }
 
 impl ExecutionContext {

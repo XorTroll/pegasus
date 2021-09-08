@@ -1,7 +1,11 @@
 use parking_lot::Mutex;
 
+use crate::ipc::sf;
+use crate::ipc::sf::client::sm::IUserInterface;
+use crate::ipc::server;
 use crate::kern::svc::Handle;
 use crate::kern::{proc::KProcess, thread::KThread, svc};
+use crate::sm::*;
 use crate::result::*;
 use super::EmulatedProcess;
 
@@ -17,32 +21,6 @@ pub fn start_process() -> Result<()> {
     let mut main_thread = KProcess::create_main_thread_host(&process, String::from("pg.proc.sm.MainThread"))?;
     KThread::start_host(&mut main_thread, main_thread_fn)?;
     Ok(())
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
-#[repr(C)]
-pub struct ServiceName {
-    pub value: u64,
-}
-
-impl ServiceName {
-    pub const fn from(value: u64) -> Self {
-        Self { value: value }
-    }
-    
-    pub const fn new(name: &str) -> Self {
-        // Note: for the name to be valid, it should end with at least a NUL terminator (use the nul!("name") macro present in this crate for that)
-        let value = unsafe { *(name.as_ptr() as *const u64) };
-        Self::from(value)
-    }
-
-    pub const fn is_empty(&self) -> bool {
-        self.value == 0
-    }
-
-    pub const fn empty() -> Self {
-        Self::from(0)
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -114,18 +92,69 @@ fn get_service_handle(name: ServiceName) -> Result<Handle> {
     svc::connect_to_port(service_info.port_handle)
 }
 
+pub struct UserInterface {
+    session: sf::Session
+}
+
+impl IUserInterface for UserInterface {
+    fn register_client(&mut self, process_id: sf::ProcessId) -> Result<()> {
+        todo!("register_client");
+    }
+
+    fn get_service_handle(&mut self, name: ServiceName) -> Result<sf::MoveHandle> {
+        todo!("get_service_handle");
+    }
+
+    fn register_service(&mut self, name: ServiceName, is_light: bool, max_sessions: u32) -> Result<sf::MoveHandle> {
+        todo!("register_service");
+    }
+
+    fn unregister_service(&mut self, name: ServiceName) -> Result<()> {
+        todo!("unregister_service");
+    }
+
+    fn detach_client(&mut self, process_id: sf::ProcessId) -> Result<()> {
+        todo!("detach_client");
+    }
+}
+
+impl sf::IObject for UserInterface {
+    fn get_session(&mut self) -> &mut sf::Session {
+        &mut self.session
+    }
+
+    fn get_command_table(&self) -> sf::CommandMetadataTable {
+        vec! [
+            ipc_cmif_interface_make_command_meta!(register_client: 0),
+            ipc_cmif_interface_make_command_meta!(get_service_handle: 1),
+            ipc_cmif_interface_make_command_meta!(register_service: 2),
+            ipc_cmif_interface_make_command_meta!(unregister_service: 3),
+            ipc_cmif_interface_make_command_meta!(detach_client: 4)
+        ]
+    }
+}
+
+impl server::IServerObject for UserInterface {
+    fn new() -> Self {
+        Self { session: sf::Session::new() }
+    }
+}
+
+impl server::INamedPort for UserInterface {
+    fn get_port_name() -> &'static str {
+        "sm:"
+    }
+
+    fn get_max_sesssions() -> u32 {
+        0x57
+    }
+}
+
 fn main_thread_fn() {
     log_line!("Hello World!");
 
-    let sm_server_port_handle = svc::manage_named_port("sm:", 0x57).unwrap();
-    log_line!("Managed 'sm:' port handle: {:#X}", sm_server_port_handle);
+    let mut manager: server::ServerManager<0x0> = server::ServerManager::new().unwrap();
 
-    loop {
-        log_line!("Loop update...");
-
-        match svc::wait_synchronization(&[sm_server_port_handle], -1) {
-            Ok(idx) => panic!("Wait succeeded at index {}!", idx),
-            Err(rc) => log_line!("Wait failed: {0} --- {0:?}", rc)
-        };
-    }
+    manager.register_named_port_server::<UserInterface>().unwrap();
+    manager.loop_process().unwrap();
 }

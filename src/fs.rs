@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::fs::{self, DirEntry, File as StdFile, OpenOptions};
 use std::io::{ErrorKind, Read, Result as IoResult, Seek, SeekFrom, Write};
 use crate::util;
-use crate::util::{Shared, SharedObject, make_shared};
+use crate::util::Shared;
 use crate::result::*;
 
 pub mod result;
@@ -327,7 +327,7 @@ impl FileSystem for HostFileSystem {
 
         let std_file = convert_io_result(OpenOptions::new().read(open_mode.contains(FileOpenMode::Read())).write(open_mode.contains(FileOpenMode::Write())).append(open_mode.contains(FileOpenMode::Append())).open(abs_path))?;
 
-        let file = make_shared(HostFile::new(std_file));
+        let file = Shared::new(HostFile::new(std_file));
         Ok(file)
     }
 
@@ -336,7 +336,7 @@ impl FileSystem for HostFileSystem {
 
         let entries = convert_io_result(convert_io_result(fs::read_dir(abs_path))?.collect::<IoResult<Vec<_>>>())?;
 
-        let dir = make_shared(HostDirectory::new(entries, open_mode));
+        let dir = Shared::new(HostDirectory::new(entries, open_mode));
         Ok(dir)
     }
 

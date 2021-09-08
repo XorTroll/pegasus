@@ -7,7 +7,7 @@ use super::thread::ThreadState;
 use super::thread::get_current_thread;
 use super::thread::make_critical_section_guard;
 use super::proc::get_current_process;
-use crate::util::{Shared, SharedObject, make_shared};
+use crate::util::Shared;
 use super::svc;
 use super::result;
 use crate::result::*;
@@ -41,7 +41,7 @@ impl KPort {
         let server_port = KServerPort::new(None, is_light);
         let client_port = KClientPort::new(None, max_sessions);
 
-        let port = make_shared(Self {
+        let port = Shared::new(Self {
             refcount: AtomicI32::new(1),
             server_port: server_port.clone(),
             client_port: client_port.clone(),
@@ -111,7 +111,7 @@ impl KSynchronizationObject for KServerPort {
 
 impl KServerPort {
     pub fn new(parent: Option<Shared<KPort>>, is_light: bool) -> Shared<Self> {
-        make_shared(Self {
+        Shared::new(Self {
             refcount: AtomicI32::new(1),
             waiting_threads: Vec::new(),
             parent: parent,
@@ -206,7 +206,7 @@ impl KSynchronizationObject for KClientPort {
 
 impl KClientPort {
     pub fn new(parent: Option<Shared<KPort>>, max_sessions: u32) -> Shared<Self> {
-        make_shared(Self {
+        Shared::new(Self {
             refcount: AtomicI32::new(1),
             waiting_threads: Vec::new(),
             max_sessions: max_sessions,
@@ -265,7 +265,7 @@ impl KSession {
         let server_session = KServerSession::new(None);
         let client_session = KClientSession::new(None, parent_port);
 
-        let session = make_shared(Self {
+        let session = Shared::new(Self {
             refcount: AtomicI32::new(1),
             server_session: server_session.clone(),
             client_session: client_session.clone(),
@@ -334,7 +334,7 @@ impl KSynchronizationObject for KServerSession {
 
 impl KServerSession {
     pub fn new(parent: Option<Shared<KSession>>) -> Shared<Self> {
-        make_shared(Self {
+        Shared::new(Self {
             refcount: AtomicI32::new(1),
             waiting_threads: Vec::new(),
             parent: parent,
@@ -406,7 +406,7 @@ impl KClientSession {
 
         get_current_process().get().increment_refcount();
 
-        make_shared(Self {
+        Shared::new(Self {
             refcount: AtomicI32::new(1),
             waiting_threads: Vec::new(),
             parent: parent,

@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use rsevents::{AutoResetEvent, Awaitable};
 use rsevents::State;
 use crate::kern::thread::KConditionVariable;
-use crate::util::{Shared, SharedObject, SharedAny, SharedCast, make_shared};
+use crate::util::{Shared, SharedAny};
 use crate::result::*;
 
 pub mod thread;
@@ -83,7 +83,7 @@ pub fn remove_named_object_by_obj<K: KAutoObject + 'static>(obj: &Shared<K>) -> 
 
         let mut obj_name: Option<String> = None;
         for (name, named_obj) in named_object_table.iter() {
-            if named_obj.ptr_eq(obj) {
+            if obj.ptr_eq_any(named_obj) {
                 obj_name = Some(name.clone());
                 break;
             }
@@ -358,7 +358,7 @@ impl KResourceLimit {
     const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
     pub fn new() -> Shared<Self> {
-        make_shared(Self {
+        Shared::new(Self {
             refcount: AtomicI32::new(1),
             limit_values: [0; LIMITABLE_RESOURCE_COUNT],
             current_values: [0; LIMITABLE_RESOURCE_COUNT],

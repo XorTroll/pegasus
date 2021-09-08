@@ -3,21 +3,24 @@ use crate::kern::KAutoObject;
 use crate::kern::KSynchronizationObject;
 use crate::kern::find_named_object;
 use crate::kern::ipc::KClientPort;
+use crate::kern::ipc::KServerPort;
 use crate::kern::ipc::KPort;
+use crate::kern::ipc::KClientSession;
 use crate::kern::proc::get_current_process;
 use crate::kern::register_named_object;
 use crate::kern::result;
-use crate::kern::thread::get_current_thread;
 use crate::kern::wait_for_sync_objects;
 use crate::result::*;
 use crate::util::Shared;
-use crate::util::{self, SharedObject};
+use crate::util;
 use core::mem;
 use std::time::Duration;
 
-use super::ipc::KClientSession;
-
 pub type Handle = u32;
+
+pub const INVALID_HANDLE: Handle = 0;
+pub const CURRENT_THREAD_PSEUDO_HANDLE: Handle = 0xFFFF8000;
+pub const CURRENT_PROCESS_PSEUDO_HANDLE: Handle = 0xFFFF8001;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[repr(u8)]
@@ -28,9 +31,6 @@ pub enum LimitableResource {
     TransferMemory = 3,
     Session = 4
 }
-
-pub const CURRENT_THREAD_PSEUDO_HANDLE: Handle = 0xFFFF8000;
-pub const CURRENT_PROCESS_PSEUDO_HANDLE: Handle = 0xFFFF8001;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[repr(u8)]
@@ -332,4 +332,37 @@ pub fn wait_synchronization(handles: &[Handle], timeout: i64) -> Result<usize> {
     }
 
     wait_for_sync_objects(&mut sync_objs, timeout)
+}
+
+pub fn accept_session(server_port_handle: Handle) -> Result<Handle> {
+    let server_port = get_current_process().get().handle_table.get_handle_obj::<KServerPort>(server_port_handle)?;
+
+    let server_session_handle = get_current_process().get().handle_table.allocate_handle()?;
+
+    let accept_fail_guard = guard((), |()| {
+        let _ = get_current_process().get().handle_table.close_handle(server_session_handle);
+    });
+
+    let is_light = server_port.get().is_light;
+    match is_light {
+        true => match server_port.get().accept_incoming_light_connection() {
+            Some(light_server_session) => get_current_process().get().handle_table.set_allocated_handle(server_session_handle, light_server_session)?,
+            None => return result::ResultNotFound::make_err()
+        },
+        false => match server_port.get().accept_incoming_connection() {
+            Some(server_session) => get_current_process().get().handle_table.set_allocated_handle(server_session_handle, server_session)?,
+            None => return result::ResultNotFound::make_err()
+        }
+    };
+
+    ScopeGuard::into_inner(accept_fail_guard);
+    Ok(server_session_handle)
+}
+
+pub fn reply_and_receive(handles: &[Handle], reply_target_session_handle: Handle, timeout: i64) -> Result<usize> {
+    todo!("ReplyAndReceive");
+}
+
+pub fn create_session(is_light: bool, name_addr: u64) -> Result<(Handle, Handle)> {
+    todo!("CreateSession");
 }

@@ -8,7 +8,7 @@ use rsevents::Awaitable;
 use rsevents::ManualResetEvent;
 use rsevents::State;
 use crate::emu::cpu;
-use crate::util::{Shared, SharedObject, make_shared, RecursiveLock, new_recursive_lock, trailing_zero_count};
+use crate::util::{Shared, RecursiveLock, new_recursive_lock, trailing_zero_count};
 use crate::result::*;
 
 use super::{KAutoObject, KFutureSchedulerObject, get_time_manager};
@@ -263,7 +263,7 @@ impl KThread {
 
         // TODO: force pause flags if owner paused...
 
-        Ok(make_shared(Self {
+        Ok(Shared::new(Self {
             refcount: AtomicI32::new(1),
             waiting_threads: Vec::new(),
             has_exited: false,
@@ -758,7 +758,7 @@ impl KScheduler {
         let scheduler = get_scheduler(cpu_core);
         loop {
             *scheduler.needs_scheduling.lock() = false;
-            // TODO: memory barrier?
+            // TODO: memory barrier? (Ryujinx does so, might not be necessary at all here...)
             let selected_thread = match scheduler.selected_thread.lock().as_ref() {
                 Some(thread) => Some(thread.clone()),
                 None => None
@@ -768,11 +768,13 @@ impl KScheduler {
             if !next_thread.ptr_eq(&scheduler.idle_thread) {
                 scheduler.idle_thread.get().scheduler_wait_event.reset();
 
+                // Note: to avoid locking the idle_thread by doing "scheduler.idle_thread.get().scheduler_wait_event.wait()", swap it temporarily with a dummy event variable.
+                // While kinda cursed, this seems to work fine...
                 next_thread.get().scheduler_wait_event.set();
-                let mut dummy_event = ManualResetEvent::new(State::Set);
-                std::mem::swap(&mut dummy_event, &mut scheduler.idle_thread.get().scheduler_wait_event);
-                dummy_event.wait();
-                std::mem::swap(&mut dummy_event, &mut scheduler.idle_thread.get().scheduler_wait_event);
+                let mut temp_idle_thread_scheduler_wait_event = ManualResetEvent::new(State::Set);
+                std::mem::swap(&mut temp_idle_thread_scheduler_wait_event, &mut scheduler.idle_thread.get().scheduler_wait_event);
+                temp_idle_thread_scheduler_wait_event.wait();
+                std::mem::swap(&mut temp_idle_thread_scheduler_wait_event, &mut scheduler.idle_thread.get().scheduler_wait_event);
             }
 
             scheduler.idle_interrupt_event.wait();

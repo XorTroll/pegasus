@@ -8,6 +8,10 @@
 #![feature(const_mut_refs)]
 #![feature(const_raw_ptr_deref)]
 #![feature(thread_id_value)]
+#![feature(derive_default_enum)]
+#![feature(specialization)]
+#![feature(adt_const_params)]
+#![feature(generic_const_exprs)]
 
 // For bit_enum enum names
 #![allow(non_snake_case)]
@@ -22,18 +26,21 @@ pub mod result;
 
 #[macro_use]
 pub mod util;
-use util::SharedObject;
+use util::make_log_guard;
 
-pub mod kern;
-
-pub mod fs;
-use fs::FileSystem;
-
-use crate::util::make_log_guard;
+#[macro_use]
+pub mod ipc;
 
 pub mod ldr;
 
 pub mod emu;
+
+pub mod kern;
+
+pub mod sm;
+
+pub mod fs;
+use fs::FileSystem;
 
 pub mod proc;
 
@@ -58,7 +65,7 @@ fn main() -> result::Result<()> {
         process::exit(1);
     }));
 
-    let fs = util::make_shared(fs::HostFileSystem::new(String::from("nso_test")));
+    let fs = util::Shared::new(fs::HostFileSystem::new(String::from("nso_test")));
 
     let npdm_file = fs.get().open_file(PathBuf::from("nso_test.npdm"), fs::FileOpenMode::Read())?;
 

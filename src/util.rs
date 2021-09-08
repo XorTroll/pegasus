@@ -1,5 +1,7 @@
 use std::fmt;
+use std::marker::Unsize;
 use std::num::NonZeroUsize;
+use std::ops::CoerceUnsized;
 use std::ptr;
 use std::any::Any;
 use std::sync::Arc;
@@ -71,23 +73,34 @@ macro_rules! bit_enum {
     };
 }
 
+macro_rules! bit_group {
+    ($base:ty [ $( $val:ident ),* ]) => {
+        <$base>::from( $( <$base>::$val().get() )|* )
+    };
+}
+
 macro_rules! bit {
     ($val:expr) => {
         (1 << ($val))
     };
 }
 
-#[macro_export]
 macro_rules! write_bits {
     ($start:expr, $end:expr, $value:expr, $data:expr) => {
         $value = ($value & (!( ((1 << ($end - $start + 1)) - 1) << $start ))) | ($data << $start);
     };
 }
 
-#[macro_export]
 macro_rules! read_bits {
     ($start:expr, $end:expr, $value:expr) => {
         ($value & (((1 << ($end - $start + 1)) - 1) << $start)) >> $start
+    };
+}
+
+#[macro_export]
+macro_rules! nul {
+    ($lit:expr) => {
+        concat!($lit, "\0\0\0\0\0\0\0\0")
     };
 }
 
@@ -180,7 +193,6 @@ pub fn log_line_msg(msg: String) {
     println!("[{} -> {}] {}", process_name, thread_name, msg);
 }
 
-#[macro_export]
 macro_rules! log_line {
     ($($arg:tt)*) => {{
         let log_msg = format!($($arg)*);
@@ -188,10 +200,16 @@ macro_rules! log_line {
     }};
 }
 
-pub fn align_up<V: Into<usize> + From<usize>>(value: V, size: usize) -> V {
+pub fn align_up<V: Into<usize> + From<usize>>(value: V, align: usize) -> V {
     // TODO: make const?
-    let mask = size - 1;
+    let mask = align - 1;
     V::from((value.into() + mask) & !mask)
+}
+
+pub fn align_down<V: Into<usize> + From<usize>>(value: V, align: usize) -> V {
+    // TODO: make const?
+    let mask = align - 1;
+    V::from(value.into() & !mask)
 }
 
 #[derive(Copy, Clone)]
@@ -462,69 +480,56 @@ pub fn trailing_zero_count(val: u64) -> u64 {
     return 64;
 }
 
-pub type Shared<T> = Arc<Mutex<T>>;
-pub type SharedAny = Arc<dyn Any + Send + Sync>;
+pub struct Shared<T: ?Sized>(pub Arc<Mutex<T>>);
+pub struct SharedAny(pub Arc<dyn Any + Send + Sync>);
 
-#[inline]
-pub fn make_shared<T: Sized>(t: T) -> Shared<T> {
-    Arc::new(Mutex::new(t))
-}
+impl<T: ?Sized> Shared<T> {
+    pub fn ptr_eq(&self, other: &Shared<T>) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 
-pub trait SharedObject<T: ?Sized> {
-    fn get(&self) -> MutexGuard<'_, T>;
-    fn ptr_eq(&self, other: &Shared<T>) -> bool;
-}
-
-pub trait SharedCast {
-    fn as_any(&self) -> SharedAny;
-    fn cast<U: Any + Send + Sync>(&self) -> Result<Shared<U>> where Self: Any + Send + Sync + Sized;
-}
-
-impl<T: ?Sized> SharedObject<T> for Shared<T> {
-    #[inline]
-    fn get(&self) -> MutexGuard<'_, T> {
-        if self.is_locked() {
+    pub fn get(&self) -> MutexGuard<'_, T> {
+        if self.0.is_locked() {
             panic!("Attempted to access an already locked Shared<{}>", std::any::type_name::<T>());
         }
 
-        self.lock()
-    }
-
-    #[inline]
-    fn ptr_eq(&self, other: &Shared<T>) -> bool {
-        Arc::ptr_eq(self, other)
+        self.0.lock()
     }
 }
 
-impl<T: Any + Send + Sync> SharedObject<T> for SharedAny {
-    fn get(&self) -> MutexGuard<'_, T> {
-        panic!("Attempted to get() from a SharedAny object");
+impl<T: Any + Send + Sync + Sized> Shared<T> {
+    pub fn new(t: T) -> Self {
+        Shared(Arc::new(Mutex::new(t)))
     }
 
-    fn ptr_eq(&self, other: &Shared<T>) -> bool {
-        Arc::ptr_eq(self, &other.as_any())
+    pub fn as_any(&self) -> SharedAny {
+        SharedAny(self.0.clone())
+    }
+
+    pub fn ptr_eq_any(&self, other: &SharedAny) -> bool {
+        Arc::ptr_eq(&other.0, &(self.0.clone() as Arc<dyn Any + Send + Sync>))
     }
 }
 
-impl SharedCast for SharedAny {
-    fn as_any(&self) -> SharedAny {
-        self.clone()
+impl<T: ?Sized> Clone for Shared<T> {
+    fn clone(&self) -> Self {
+        Shared(self.0.clone())
     }
+}
 
-    fn cast<U: Any + Send + Sync>(&self) -> Result<Shared<U>> where Self: Any + Send + Sync + Sized {
-        match self.clone().downcast::<Mutex<U>>() {
-            Ok(shared) => Ok(shared),
+impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<Shared<U>> for Shared<T> {}
+
+impl SharedAny {
+    pub fn cast<U: Any + Send + Sync>(&self) -> Result<Shared<U>> {
+        match self.0.clone().downcast::<Mutex<U>>() {
+            Ok(arc) => Ok(Shared(arc)),
             Err(_) => result::ResultInvalidCast::make_err()
         }
     }
 }
 
-impl<T: Any + Send + Sync> SharedCast for Shared<T> {
-    fn as_any(&self) -> SharedAny {
-        self.clone()
-    }
-
-    fn cast<U: Any + Send + Sync>(&self) -> Result<Shared<U>> where Self: Any + Send + Sync + Sized {
-        self.as_any().cast()
+impl Clone for SharedAny {
+    fn clone(&self) -> Self {
+        SharedAny(self.0.clone())
     }
 }

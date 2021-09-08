@@ -154,5 +154,6 @@ pub type Result<T> = result::Result<T, ResultCode>;
 pub const RESULT_MODULE: u32 = 503;
 
 result_define_group!(RESULT_MODULE => {
-    InvalidCast: 1
+    NotSupported: 1,
+    InvalidCast: 2
 });
