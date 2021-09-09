@@ -366,6 +366,14 @@ impl KServerSession {
 
         Ok(())
     }
+
+    pub fn reply(&mut self, custom_cmd_buf: Option<(u64, usize)>) -> Result<()> {
+        todo!("reply");
+    }
+
+    pub fn receive(&mut self, custom_cmd_buf: Option<(u64, usize)>) -> Result<()> {
+        todo!("receive");
+    }
 }
 
 // ---

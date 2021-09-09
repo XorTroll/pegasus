@@ -6,6 +6,7 @@ use crate::kern::ipc::KClientPort;
 use crate::kern::ipc::KServerPort;
 use crate::kern::ipc::KPort;
 use crate::kern::ipc::KClientSession;
+use crate::kern::ipc::KServerSession;
 use crate::kern::proc::get_current_process;
 use crate::kern::register_named_object;
 use crate::kern::result;
@@ -224,27 +225,18 @@ pub fn close_handle(handle: Handle) -> Result<()> {
     get_current_process().get().handle_table.close_handle(handle)
 }
 
-pub fn break_(reason: BreakReason, arg: &[u8]) -> Result<()> {
-    if reason.is_notification_only() {
-        let actual_reason = reason.without_notification_flag();
-        log_line!("[Break] Notified, reason: {:?}", actual_reason);
-    }
-    else {
-        if arg.len() == mem::size_of::<ResultCode>() {
-            let rc: ResultCode = util::slice_read_val(arg, None)?;
-            panic!("[Break] Reason: {:?}, with result code {1} ({1:?})", reason, rc);
-        }
-        else {
-            panic!("[Break] Reason: {:?}, with arg size {}", reason, arg.len());
-        }
+pub fn wait_synchronization(handles: &[Handle], timeout: i64) -> Result<usize> {
+    result_return_unless!(handles.len() <= 64, result::ResultOutOfRange);
+
+    let mut sync_objs: Vec<Shared<dyn KSynchronizationObject>> = Vec::with_capacity(handles.len());
+    for handle in handles {
+        let sync_obj = get_current_process().get().handle_table.get_handle_sync_obj(*handle)?;
+        // sync_obj.get().increment_refcount();
+
+        sync_objs.push(sync_obj);
     }
 
-    Ok(())
-}
-
-pub fn output_debug_string(msg: &str) -> Result<()> {
-    log_line!("[OutputDebugString] {}", msg);
-    Ok(())
+    wait_for_sync_objects(&mut sync_objs, timeout)
 }
 
 pub fn connect_to_named_port(name: &str) -> Result<Handle> {
@@ -271,6 +263,95 @@ pub fn send_sync_request(client_session_handle: Handle) -> Result<()> {
     
     let rc = client_session.get().send_sync_request(None, None);
     rc
+}
+
+pub fn break_(reason: BreakReason, arg: &[u8]) -> Result<()> {
+    if reason.is_notification_only() {
+        let actual_reason = reason.without_notification_flag();
+        log_line!("[Break] Notified, reason: {:?}", actual_reason);
+    }
+    else {
+        if arg.len() == mem::size_of::<ResultCode>() {
+            let rc: ResultCode = util::slice_read_val(arg, None)?;
+            panic!("[Break] Reason: {:?}, with result code {1} ({1:?})", reason, rc);
+        }
+        else {
+            panic!("[Break] Reason: {:?}, with arg size {}", reason, arg.len());
+        }
+    }
+
+    Ok(())
+}
+
+pub fn output_debug_string(msg: &str) -> Result<()> {
+    log_line!("[OutputDebugString] {}", msg);
+    Ok(())
+}
+
+pub fn create_session(is_light: bool, name_addr: u64) -> Result<(Handle, Handle)> {
+    todo!("CreateSession");
+}
+
+pub fn accept_session(server_port_handle: Handle) -> Result<Handle> {
+    let server_port = get_current_process().get().handle_table.get_handle_obj::<KServerPort>(server_port_handle)?;
+
+    let server_session_handle = get_current_process().get().handle_table.allocate_handle()?;
+
+    let accept_fail_guard = guard((), |()| {
+        let _ = get_current_process().get().handle_table.close_handle(server_session_handle);
+    });
+
+    let is_light = server_port.get().is_light;
+    match is_light {
+        true => match server_port.get().accept_incoming_light_connection() {
+            Some(light_server_session) => get_current_process().get().handle_table.set_allocated_handle(server_session_handle, light_server_session)?,
+            None => return result::ResultNotFound::make_err()
+        },
+        false => match server_port.get().accept_incoming_connection() {
+            Some(server_session) => get_current_process().get().handle_table.set_allocated_handle(server_session_handle, server_session)?,
+            None => return result::ResultNotFound::make_err()
+        }
+    };
+
+    ScopeGuard::into_inner(accept_fail_guard);
+    Ok(server_session_handle)
+}
+
+pub fn reply_and_receive(handles: &[Handle], reply_target_session_handle: Handle, timeout: i64) -> Result<usize> {
+    result_return_unless!(handles.len() <= 64, result::ResultOutOfRange);
+
+    let mut sync_objs: Vec<Shared<dyn KSynchronizationObject>> = Vec::with_capacity(handles.len());
+    for handle in handles {
+        let sync_obj = get_current_process().get().handle_table.get_handle_sync_obj(*handle)?;
+        // sync_obj.get().increment_refcount();
+
+        sync_objs.push(sync_obj);
+    }
+
+    if reply_target_session_handle != INVALID_HANDLE {
+        let reply_target_session = get_current_process().get().handle_table.get_handle_obj::<KServerSession>(reply_target_session_handle)?;
+
+        reply_target_session.get().reply(None)?;
+    }
+
+    'w: loop {
+        let idx = wait_for_sync_objects(&mut sync_objs, timeout)?;
+
+        let server_session = get_current_process().get().handle_table.get_handle_obj::<KServerSession>(handles[idx])?;
+
+        log_line!("Receive from handle {:#X}", handles[idx]);
+
+        match server_session.get().receive(None) {
+            Ok(()) => return Ok(idx),
+            Err(rc) => {
+                if result::ResultNotFound::matches(rc) {
+                    continue 'w;
+                }
+
+                return Err(rc);
+            }
+        };
+    }
 }
 
 pub fn create_port(max_sessions: u32, is_light: bool, name_addr: u64) -> Result<(Handle, Handle)> {
@@ -318,51 +399,4 @@ pub fn connect_to_port(client_port_handle: Handle) -> Result<Handle> {
     ScopeGuard::into_inner(connect_fail_guard);
     client_session.get().decrement_refcount();
     Ok(client_session_handle)
-}
-
-pub fn wait_synchronization(handles: &[Handle], timeout: i64) -> Result<usize> {
-    result_return_unless!(handles.len() <= 64, result::ResultOutOfRange);
-
-    let mut sync_objs: Vec<Shared<dyn KSynchronizationObject>> = Vec::with_capacity(handles.len());
-    for handle in handles {
-        let sync_obj = get_current_process().get().handle_table.get_handle_sync_obj(*handle)?;
-        // sync_obj.get().increment_refcount();
-
-        sync_objs.push(sync_obj);
-    }
-
-    wait_for_sync_objects(&mut sync_objs, timeout)
-}
-
-pub fn accept_session(server_port_handle: Handle) -> Result<Handle> {
-    let server_port = get_current_process().get().handle_table.get_handle_obj::<KServerPort>(server_port_handle)?;
-
-    let server_session_handle = get_current_process().get().handle_table.allocate_handle()?;
-
-    let accept_fail_guard = guard((), |()| {
-        let _ = get_current_process().get().handle_table.close_handle(server_session_handle);
-    });
-
-    let is_light = server_port.get().is_light;
-    match is_light {
-        true => match server_port.get().accept_incoming_light_connection() {
-            Some(light_server_session) => get_current_process().get().handle_table.set_allocated_handle(server_session_handle, light_server_session)?,
-            None => return result::ResultNotFound::make_err()
-        },
-        false => match server_port.get().accept_incoming_connection() {
-            Some(server_session) => get_current_process().get().handle_table.set_allocated_handle(server_session_handle, server_session)?,
-            None => return result::ResultNotFound::make_err()
-        }
-    };
-
-    ScopeGuard::into_inner(accept_fail_guard);
-    Ok(server_session_handle)
-}
-
-pub fn reply_and_receive(handles: &[Handle], reply_target_session_handle: Handle, timeout: i64) -> Result<usize> {
-    todo!("ReplyAndReceive");
-}
-
-pub fn create_session(is_light: bool, name_addr: u64) -> Result<(Handle, Handle)> {
-    todo!("CreateSession");
 }
