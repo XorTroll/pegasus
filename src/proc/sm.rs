@@ -1,5 +1,4 @@
 use parking_lot::Mutex;
-
 use crate::ipc::sf;
 use crate::ipc::sf::client::sm::IUserInterface;
 use crate::ipc::server;
@@ -56,6 +55,26 @@ fn register_service_info(info: ServiceInfo) {
     }
 }
 
+fn unregister_service_info(name: ServiceName, process_id: u64) -> Result<()> {
+    unsafe {
+        let mut services = G_SERVICES.lock();
+
+        for i in 0..services.len() {
+            let service = &services[i];
+            if service.name == name {
+                if service.owner_process_id != process_id {
+                    return result::ResultNotAllowed::make_err();
+                }
+
+                services.remove(i);
+                return Ok(());
+            }
+        }
+    }
+
+    result::ResultNotRegistered::make_err()
+}
+
 fn find_service_info(name: ServiceName) -> Result<ServiceInfo> {
     unsafe {
         let services = G_SERVICES.lock();
@@ -67,11 +86,11 @@ fn find_service_info(name: ServiceName) -> Result<ServiceInfo> {
         }
     }
 
-    Err(ResultCode::new(0x88))
+    result::ResultNotRegistered::make_err()
 }
 
 fn register_service(name: ServiceName, process_id: u64, max_sessions: u32, is_light: bool) -> Result<Handle> {
-    result_return_if!(has_service_info(name), 0xb0);
+    result_return_if!(has_service_info(name), result::ResultAlreadyRegistered);
     
     let (server_handle, client_handle) = svc::create_port(max_sessions, is_light, 0)?;
     let service_info = ServiceInfo {
@@ -86,6 +105,10 @@ fn register_service(name: ServiceName, process_id: u64, max_sessions: u32, is_li
     Ok(client_handle)
 }
 
+fn unregister_service(name: ServiceName, process_id: u64) -> Result<()> {
+    unregister_service_info(name, process_id)
+}
+
 fn get_service_handle(name: ServiceName) -> Result<Handle> {
     let service_info = find_service_info(name)?;
 
@@ -93,28 +116,55 @@ fn get_service_handle(name: ServiceName) -> Result<Handle> {
 }
 
 pub struct UserInterface {
-    session: sf::Session
+    session: sf::Session,
+    process_id: u64,
+    initialized: bool
 }
 
 impl IUserInterface for UserInterface {
     fn register_client(&mut self, process_id: sf::ProcessId) -> Result<()> {
-        todo!("register_client - process_id: {}", process_id.process_id);
+        log_line!("register_client - process_id: {:#X}", process_id.process_id);
+
+        self.process_id = process_id.process_id;
+        self.initialized = true;
+        Ok(())
     }
 
     fn get_service_handle(&mut self, name: ServiceName) -> Result<sf::MoveHandle> {
-        todo!("get_service_handle, name: {}", name.value);
+        log_line!("get_service_handle - name: {}", name.to_str());
+        
+        result_return_unless!(self.initialized, result::ResultInvalidClient);
+        result_return_if!(name.is_empty(), result::ResultInvalidServiceName);
+
+        let handle = get_service_handle(name)?;
+        Ok(sf::MoveHandle::from(handle))
     }
 
     fn register_service(&mut self, name: ServiceName, is_light: bool, max_sessions: u32) -> Result<sf::MoveHandle> {
-        todo!("register_service - name: {}, is_light: {}, max_sessions: {}", name.value, is_light, max_sessions);
+        log_line!("register_service - name: {}, is_light: {}, max_sessions: {}", name.to_str(), is_light, max_sessions);
+        
+        result_return_unless!(self.initialized, result::ResultInvalidClient);
+        result_return_if!(name.is_empty(), result::ResultInvalidServiceName);
+
+        let handle = register_service(name, self.process_id, max_sessions, is_light)?;
+        Ok(sf::MoveHandle::from(handle))
     }
 
     fn unregister_service(&mut self, name: ServiceName) -> Result<()> {
-        todo!("unregister_service - name: {}", name.value);
+        log_line!("unregister_service - name: {}", name.to_str());
+
+        result_return_unless!(self.initialized, result::ResultInvalidClient);
+        result_return_if!(name.is_empty(), result::ResultInvalidServiceName);
+
+        unregister_service(name, self.process_id)?;
+        Ok(())
     }
 
     fn detach_client(&mut self, process_id: sf::ProcessId) -> Result<()> {
-        todo!("detach_client - process_id: {}", process_id.process_id);
+        log_line!("detach_client - process_id: {:#X}", process_id.process_id);
+
+        self.initialized = false;
+        Ok(())
     }
 }
 
@@ -136,7 +186,11 @@ impl sf::IObject for UserInterface {
 
 impl server::IServerObject for UserInterface {
     fn new() -> Self {
-        Self { session: sf::Session::new() }
+        Self {
+            session: sf::Session::new(),
+            process_id: 0,
+            initialized: false
+        }
     }
 }
 

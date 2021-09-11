@@ -9,7 +9,7 @@ use std::thread;
 use parking_lot::lock_api::{GetThreadId, RawReentrantMutex, RawMutex as RawMutexTrait};
 use parking_lot::{RawMutex, Mutex, MutexGuard};
 use crate::kern::proc::{get_current_process, has_current_process};
-use crate::kern::thread::{get_current_thread, has_current_thread};
+use crate::kern::thread::has_current_thread;
 use crate::result;
 use crate::result::*;
 
@@ -39,7 +39,7 @@ macro_rules! bit_enum {
             )*
         }
         
-        impl const core::ops::BitOr for $name {
+        impl const std::ops::BitOr for $name {
             type Output = Self;
         
             #[inline]
@@ -48,7 +48,7 @@ macro_rules! bit_enum {
             }
         }
 
-        impl const core::ops::BitAnd for $name {
+        impl const std::ops::BitAnd for $name {
             type Output = Self;
         
             #[inline]
@@ -57,14 +57,14 @@ macro_rules! bit_enum {
             }
         }
 
-        impl core::ops::BitOrAssign for $name {
+        impl std::ops::BitOrAssign for $name {
             #[inline]
             fn bitor_assign(&mut self, other: Self) {
                 self.0 |= other.0
             }
         }
         
-        impl core::ops::BitAndAssign for $name {
+        impl std::ops::BitAndAssign for $name {
             #[inline]
             fn bitand_assign(&mut self, other: Self) {
                 self.0 &= other.0

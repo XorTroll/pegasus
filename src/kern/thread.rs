@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::thread::Builder;
 use std::thread::JoinHandle;
@@ -61,7 +60,6 @@ impl KCriticalSection {
                 None => false
             };
             if is_cur_thread_schedulable {
-                // log_line!("Enable scheduling...");
                 KScheduler::enable_scheduling(scheduled_cores_mask);
             }
             else {
@@ -888,7 +886,7 @@ impl KScheduler {
     pub fn schedule(&mut self) {
         *self.needs_scheduling.lock() = false;
 
-        let mut cur_thread = get_current_thread();
+        let cur_thread = get_current_thread();
         let selected_thread = self.selected_thread.lock().clone();
 
         if let Some(sel_thread) = selected_thread.as_ref() {

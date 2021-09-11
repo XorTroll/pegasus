@@ -310,12 +310,12 @@ impl<'a> IHipcManager for HipcManager<'a> {
     }
 
     fn query_pointer_buffer_size(&mut self) -> Result<u16> {
-        log_line!("query_pointer_buffer_size -> size: {}", self.pointer_buf_size);
+        log_line!("query_pointer_buffer_size! size: {}", self.pointer_buf_size);
         Ok(self.pointer_buf_size as u16)
     }
 
     fn clone_current_object_ex(&mut self, _tag: u32) -> Result<sf::MoveHandle> {
-        log_line!("clone_current_object_ex -> size: {}", self.pointer_buf_size);
+        log_line!("clone_current_object_ex!");
         // The tag value is unused anyways :P
         self.clone_current_object()
     }
@@ -375,7 +375,7 @@ impl<const P: usize> ServerManager<P> {
     }
 
     #[inline(always)]
-    fn handle_request_command(&mut self, ctx: &mut CommandContext, rq_id: u32, command_type: cmif::CommandType, domain_command_type: cmif::DomainCommandType, ipc_buf_backup: &[u8], domain_table: Shared<DomainTable>) -> Result<()> {
+    fn handle_request_command(&mut self, ctx: &mut CommandContext, rq_id: u32, command_type: cmif::CommandType, domain_command_type: cmif::DomainCommandType, domain_table: Shared<DomainTable>) -> Result<()> {
         let is_domain = ctx.object_info.is_domain();
         let domain_table_clone = domain_table.clone();
         let mut do_handle_request = || -> Result<()> {
@@ -480,7 +480,6 @@ impl<const P: usize> ServerManager<P> {
         let mut command_type = cmif::CommandType::Invalid;
         let mut domain_cmd_type = cmif::DomainCommandType::Invalid;
         let mut rq_id: u32 = 0;
-        let mut ipc_buf_backup: [u8; 0x100] = [0; 0x100];
         let mut domain_table: Shared<DomainTable> = Shared::new(DomainTable::new());
 
         for server_holder in &mut self.server_holders {
@@ -508,8 +507,6 @@ impl<const P: usize> ServerManager<P> {
                             },
                             _ => {}
                         };
-
-                        unsafe { core::ptr::copy(get_ipc_buffer(), ipc_buf_backup.as_mut_ptr(), ipc_buf_backup.len()) };
 
                         ctx = CommandContext::new_server(server_info, self.pointer_buffer.as_mut_ptr());
                         command_type = cmif::server::read_command_from_ipc_buffer(&mut ctx);
@@ -542,10 +539,7 @@ impl<const P: usize> ServerManager<P> {
                             cmif::CommandType::Close => {
                                 should_close_session = true;
                             },
-                            _ => {
-                                log_line!("Unknown cmd type: {}", command_type as u32);
-                                return result::ResultUnknownCommandType::make_err()
-                            }
+                            _ => return result::ResultUnknownCommandType::make_err()
                         }
                     },
                     WaitHandleType::Server => {
@@ -574,7 +568,7 @@ impl<const P: usize> ServerManager<P> {
 
         match command_type {
             cmif::CommandType::Request | cmif::CommandType::RequestWithContext => {
-                self.handle_request_command(&mut ctx, rq_id, command_type, domain_cmd_type, &ipc_buf_backup, domain_table)?;
+                self.handle_request_command(&mut ctx, rq_id, command_type, domain_cmd_type, domain_table)?;
                 reply_impl()?;
             },
             cmif::CommandType::Control | cmif::CommandType::ControlWithContext => {

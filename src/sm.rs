@@ -1,25 +1,37 @@
+pub mod result;
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 #[repr(C)]
 pub struct ServiceName {
-    pub value: u64,
+    pub name: [u8; 0x8]
 }
 
 impl ServiceName {
-    pub const fn from(value: u64) -> Self {
-        Self { value: value }
-    }
-    
     pub const fn new(name: &str) -> Self {
-        // Note: for the name to be valid, it should end with at least a NUL terminator (use the nul!("name") macro present in this crate for that)
-        let value = unsafe { *(name.as_ptr() as *const u64) };
-        Self::from(value)
+        let name_u8 = name.as_bytes();
+        Self {
+            name: [
+                name_u8[0], name_u8[1],
+                name_u8[2], name_u8[3],
+                name_u8[4], name_u8[5],
+                name_u8[6], name_u8[7]
+            ]
+        }
+    }
+
+    pub const fn to_str(&self) -> &str {
+        unsafe {
+            std::str::from_utf8_unchecked(&self.name)
+        }
     }
 
     pub const fn is_empty(&self) -> bool {
-        self.value == 0
+        self.name[0] == 0
     }
 
     pub const fn empty() -> Self {
-        Self::from(0)
+        Self {
+            name: [0; 0x8]
+        }
     }
 }

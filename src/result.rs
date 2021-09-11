@@ -22,18 +22,22 @@ pub trait ResultBase {
     fn get_module() -> u32;
     fn get_description() -> u32;
 
+    #[inline]
     fn get_value() -> u32 {
         pack_value(Self::get_module(), Self::get_description())
     }
 
+    #[inline]
     fn make() -> ResultCode {
         ResultCode::new(Self::get_value())
     }
 
+    #[inline]
     fn make_err<T>() -> Result<T> {
         Err(Self::make())
     }
 
+    #[inline]
     fn matches(rc: ResultCode) -> bool {
         rc.get_value() == Self::get_value()
     }

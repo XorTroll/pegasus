@@ -8,7 +8,7 @@ use crate::result as lib_result;
 use super::KAutoObject;
 use super::KResourceLimit;
 use super::KSynchronizationObject;
-use super::ipc::{KClientPort, KClientSession, KLightClientSession, KLightServerSession, KLightSession, KPort, KServerPort, KServerSession, KSession};
+use super::ipc::{KClientPort, KClientSession, KServerPort, KServerSession};
 use super::thread::{KThread, try_get_current_thread};
 use super::thread::get_current_thread;
 use super::svc::LimitableResource;
@@ -190,54 +190,6 @@ impl KHandleTable {
     #[inline]
     pub fn get_handle_obj<K: KAutoObject + 'static>(&self, handle: Handle) -> Result<Shared<K>> {
         self.get_handle_obj_any(handle)?.cast::<K>()
-    }
-
-    pub fn get_handle_auto_obj(&self, handle: Handle) -> Result<Shared<dyn KAutoObject>> {
-        // Due to how great Rust is with downcasting, we have to do this with all KAutoObject types. Luckily there aren't that many of them...
-        let obj = self.get_handle_obj_any(handle)?;
-
-        if let Ok(thread) = obj.cast::<KThread>() {
-            return Ok(thread);
-        }
-
-        if let Ok(process) = obj.cast::<KProcess>() {
-            return Ok(process);
-        }
-        if let Ok(process) = obj.cast::<KResourceLimit>() {
-            return Ok(process);
-        }
-
-        if let Ok(port) = obj.cast::<KPort>() {
-            return Ok(port);
-        }
-        if let Ok(server_port) = obj.cast::<KServerPort>() {
-            return Ok(server_port);
-        }
-        if let Ok(client_port) = obj.cast::<KClientPort>() {
-            return Ok(client_port);
-        }
-
-        if let Ok(session) = obj.cast::<KSession>() {
-            return Ok(session);
-        }
-        if let Ok(server_session) = obj.cast::<KServerSession>() {
-            return Ok(server_session);
-        }
-        if let Ok(client_session) = obj.cast::<KClientSession>() {
-            return Ok(client_session);
-        }
-
-        if let Ok(session) = obj.cast::<KLightSession>() {
-            return Ok(session);
-        }
-        if let Ok(server_session) = obj.cast::<KLightServerSession>() {
-            return Ok(server_session);
-        }
-        if let Ok(client_session) = obj.cast::<KLightClientSession>() {
-            return Ok(client_session);
-        }
-
-        lib_result::ResultInvalidCast::make_err()
     }
     
     pub fn get_handle_sync_obj(&self, handle: Handle) -> Result<Shared<dyn KSynchronizationObject>> {

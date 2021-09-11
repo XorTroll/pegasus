@@ -123,13 +123,12 @@ fn unicorn_code_hook(uc_h: Handle, address: u64, _size: usize) {
     
 }
 
-fn unicorn_intr_hook(_uc_h: Handle, intr_no: u32) {
+fn unicorn_intr_hook(_uc_h: Handle, _intr_no: u32) {
     // This hook is present since unicorn would fail if an interrupt happens and no hook is added.
     // In other CPU emulators, we would be able to get the SVC ID from here, but unicorn itself doesn't provide it.
     // Therefore, the SVCs are handled above (thanks unicorn for this awful implementation)
 
-    log_line!("Interrupt {}!", intr_no);
-    log_line!("Scheduling...");
+    // log_line!("Interrupt {}!", intr_no);
 
     let cur_thread = thread::get_current_thread();
     let is = cur_thread.get().is_schedulable;
@@ -137,8 +136,6 @@ fn unicorn_intr_hook(_uc_h: Handle, intr_no: u32) {
         let cur_core = cur_thread.get().cur_core;
         get_scheduler(cur_core).schedule();
     }
-
-    log_line!("Scheduled!");
 }
 
 fn create_memory_region(segment_file_data: Vec<u8>, address: u64, is_compressed: bool, section_size: usize, perm: Permission) -> Result<MemoryRegion> {

@@ -65,7 +65,7 @@ impl IUserInterface for UserInterface {
 
 impl client::INamedPort for UserInterface {
     fn get_name() -> &'static str {
-        nul!("sm:")
+        "sm:"
     }
 
     fn post_initialize(&mut self) -> Result<()> {
