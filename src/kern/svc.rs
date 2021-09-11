@@ -17,6 +17,9 @@ use crate::util;
 use core::mem;
 use std::time::Duration;
 
+use super::ipc::KLightSession;
+use super::ipc::KSession;
+
 pub type Handle = u32;
 
 pub const INVALID_HANDLE: Handle = 0;
@@ -286,8 +289,33 @@ pub fn output_debug_string(msg: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn create_session(is_light: bool, name_addr: u64) -> Result<(Handle, Handle)> {
-    todo!("CreateSession");
+pub fn create_session(is_light: bool, _name_addr: u64) -> Result<(Handle, Handle)> {
+    get_current_process().get().resource_limit.get().reserve(LimitableResource::Session, 1, None)?;
+
+    let (server_session, client_session) = match is_light {
+        true => {
+            todo!("Light IPC support for CreateSession")
+        },
+        false => {
+            let session = KSession::new(None);
+            let server_session = session.get().server_session.clone();
+            let client_session = session.get().client_session.clone();
+
+            (server_session.as_any(), client_session.as_any())
+        }
+    };
+
+    let server_session_handle = get_current_process().get().handle_table.allocate_handle_set_any(server_session)?;
+
+    let client_session_handle_fail_guard = guard((), |()| {
+        let _ = get_current_process().get().handle_table.close_handle(server_session_handle);
+    });
+
+    let client_session_handle = get_current_process().get().handle_table.allocate_handle_set_any(client_session)?;
+
+    ScopeGuard::into_inner(client_session_handle_fail_guard);
+
+    Ok((server_session_handle, client_session_handle))
 }
 
 pub fn accept_session(server_port_handle: Handle) -> Result<Handle> {

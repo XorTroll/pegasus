@@ -259,8 +259,8 @@ impl Drop for KClientPort {
 
 pub struct KSession {
     refcount: AtomicI32,
-    server_session: Shared<KServerSession>,
-    client_session: Shared<KClientSession>,
+    pub server_session: Shared<KServerSession>,
+    pub client_session: Shared<KClientSession>,
     state: ChannelState
 }
 
