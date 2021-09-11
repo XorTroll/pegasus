@@ -15,7 +15,7 @@ use thread::get_critical_section;
 use thread::make_critical_section_guard;
 
 use self::svc::LimitableResource;
-use self::thread::initialize_schedulers;
+use self::thread::{get_current_thread, initialize_schedulers};
 
 pub mod mem;
 
@@ -153,36 +153,32 @@ pub trait KSynchronizationObject : KAutoObject {
 }
 
 pub fn wait_for_sync_objects(objs: &mut [Shared<dyn KSynchronizationObject>], timeout: i64) -> Result<usize> {
-    get_critical_section().enter();
+    let _guard = make_critical_section_guard();
 
     for i in 0..objs.len() {
         let obj = &objs[i];
 
         if obj.get().is_signaled() {
-            get_critical_section().leave();
             return Ok(i);
         }
     }
 
     if timeout == 0 {
-        get_critical_section().leave();
         return result::ResultTimedOut::make_err();
     }
 
-    let mut cur_thread = thread::get_current_thread();
+    let mut cur_thread = get_current_thread();
 
-    let should_be_terminated = cur_thread.get().should_be_terminated;
-    let cur_state = cur_thread.get().state;
-    if should_be_terminated || (cur_state == ThreadState::Terminated) {
-        get_critical_section().leave();
+    if cur_thread.get().is_termination_requested() {
         return result::ResultTerminationRequested::make_err();
     }
     else if cur_thread.get().sync_cancelled {
-        get_critical_section().leave();
+        cur_thread.get().sync_cancelled = false;
+
         return result::ResultCancelled::make_err();
     }
     else {
-        let mut thread_idxs: Vec<usize> = Vec::with_capacity(objs.len());
+        let mut thread_idxs: Vec<usize> = Vec::new();
         for obj in objs.iter_mut() {
             thread_idxs.push(obj.get().add_waiting_thread(cur_thread.clone()));
         }
@@ -205,9 +201,9 @@ pub fn wait_for_sync_objects(objs: &mut [Shared<dyn KSynchronizationObject>], ti
             todo!("UnscheduleFutureInvocation");
         }
 
-        cur_thread.get().sync_result.to(0)?;
-
         get_critical_section().enter();
+
+        cur_thread.get().sync_result.to(0)?;
 
         if let Some(signaled_obj) = cur_thread.get().signaled_obj.as_ref() {
             for i in 0..objs.len() {
@@ -217,14 +213,12 @@ pub fn wait_for_sync_objects(objs: &mut [Shared<dyn KSynchronizationObject>], ti
                 obj.get().remove_waiting_thread(index);
      
                 if obj.ptr_eq(signaled_obj) {
-                    get_critical_section().leave();
                     return Ok(i);
                 }
             }
         }
     }
 
-    get_critical_section().leave();
     result::ResultTimedOut::make_err()
 }
 

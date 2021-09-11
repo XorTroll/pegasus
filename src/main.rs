@@ -90,11 +90,12 @@ fn main() -> result::Result<()> {
 
     let mut process = kern::proc::KProcess::new(Some(cpu_ctx), npdm)?;
     let (mut main_thread, main_thread_handle) = kern::proc::KProcess::create_main_thread(&mut process, main_thread_host_name, nso_start_addr)?;
+    log_line!("Running main test program...");
     kern::thread::KThread::start_exec(&mut main_thread, 0u64, main_thread_handle)?;
 
     loop {
-        std::thread::sleep(std::time::Duration::from_secs(5));
-        log_line!("HOSTMAIN 5 secs elapsed");
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        log_line!("HOSTMAIN 1 sec elapsed");
     }
 
     Ok(())

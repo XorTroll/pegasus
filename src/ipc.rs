@@ -1,6 +1,7 @@
 use core::ptr;
 use core::mem;
 use arrayvec::ArrayVec;
+use crate::kern::svc::Handle;
 use crate::kern::thread::get_current_thread;
 use crate::result::*;
 use crate::result as lib_result;
@@ -442,7 +443,7 @@ impl CommandHeader {
         count
     }
 
-    pub const fn new(command_type: u32, send_static_count: u32, send_buffer_count: u32, receive_buffer_count: u32, exchange_buffer_count: u32, data_word_count: u32, receive_static_count: u32, has_special_header: bool) -> Self {
+    pub const fn new(command_type: u32, send_static_count: u32, send_buffer_count: u32, receive_buffer_count: u32, exchange_buffer_count: u32, data_word_count: u32, receive_static_offset: u32, receive_static_count: u32, has_special_header: bool) -> Self {
         let mut bits_1: u32 = 0;
         write_bits!(0, 15, bits_1, command_type);
         write_bits!(16, 19, bits_1, send_static_count);
@@ -453,6 +454,7 @@ impl CommandHeader {
         let mut bits_2: u32 = 0;
         write_bits!(0, 9, bits_2, data_word_count);
         write_bits!(10, 13, bits_2, Self::encode_receive_static_type(receive_static_count));
+        write_bits!(20, 30, bits_2, (receive_static_offset + 3) / (mem::size_of::<u32>() as u32));
         write_bits!(31, 31, bits_2, has_special_header as u32);
 
         Self { bits_1: bits_1, bits_2: bits_2 }
@@ -489,8 +491,18 @@ impl CommandHeader {
         Self::decode_receive_static_type(read_bits!(10, 13, self.bits_2))
     }
 
+    pub const fn get_receive_static_offset(&self) -> u32 {
+        read_bits!(20, 30, self.bits_2) * (mem::size_of::<u32>() as u32)
+    }
+
     pub const fn get_has_special_header(&self) -> bool {
         read_bits!(31, 31, self.bits_2) != 0
+    }
+
+    pub const fn get_total_size(&self) -> u32 {
+        self.get_send_static_count() * (mem::size_of::<SendStaticDescriptor>() as u32) +
+        (self.get_send_buffer_count() + self.get_receive_buffer_count() + self.get_exchange_buffer_count()) * (mem::size_of::<BufferDescriptor>() as u32) +
+        self.get_data_word_count() * (mem::size_of::<u32>() as u32)
     }
 }
 
@@ -524,6 +536,14 @@ impl CommandSpecialHeader {
 
     pub const fn get_move_handle_count(&self) -> u32 {
         read_bits!(5, 8, self.bits)
+    }
+
+    pub const fn get_total_size(&self) -> u32 {
+        (match self.get_send_process_id() {
+            true => mem::size_of::<u64>() as u32,
+            false => 0u32
+        }) +
+        (self.get_copy_handle_count() + self.get_move_handle_count()) * (mem::size_of::<Handle>() as u32)
     }
 }
 
@@ -608,7 +628,7 @@ impl DataWalker {
 
 #[inline(always)]
 pub fn get_ipc_buffer() -> *mut u8 {
-    get_current_thread().get().cpu_exec_ctx.as_mut().unwrap().tlr.data.as_mut_ptr()
+    get_current_thread().get().get_tlr_ptr()
 }
 
 #[inline(always)]

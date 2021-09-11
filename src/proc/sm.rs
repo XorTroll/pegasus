@@ -98,23 +98,23 @@ pub struct UserInterface {
 
 impl IUserInterface for UserInterface {
     fn register_client(&mut self, process_id: sf::ProcessId) -> Result<()> {
-        todo!("register_client");
+        todo!("register_client - process_id: {}", process_id.process_id);
     }
 
     fn get_service_handle(&mut self, name: ServiceName) -> Result<sf::MoveHandle> {
-        todo!("get_service_handle");
+        todo!("get_service_handle, name: {}", name.value);
     }
 
     fn register_service(&mut self, name: ServiceName, is_light: bool, max_sessions: u32) -> Result<sf::MoveHandle> {
-        todo!("register_service");
+        todo!("register_service - name: {}, is_light: {}, max_sessions: {}", name.value, is_light, max_sessions);
     }
 
     fn unregister_service(&mut self, name: ServiceName) -> Result<()> {
-        todo!("unregister_service");
+        todo!("unregister_service - name: {}", name.value);
     }
 
     fn detach_client(&mut self, process_id: sf::ProcessId) -> Result<()> {
-        todo!("detach_client");
+        todo!("detach_client - process_id: {}", process_id.process_id);
     }
 }
 

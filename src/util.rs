@@ -186,7 +186,7 @@ pub fn log_line_msg(msg: String) {
         false => String::from("Host~pegasus")
     };
     let thread_name = match has_current_thread() {
-        true => String::from(get_current_thread().get().host_thread_handle.as_ref().unwrap().thread().name().unwrap()),
+        true => String::from(std::thread::current().name().unwrap()),
         false => format!("Host~{}", std::thread::current().name().unwrap())
     };
 
@@ -494,6 +494,10 @@ impl<T: ?Sized> Shared<T> {
         }
 
         self.0.lock()
+    }
+
+    pub fn is_locked(&self) -> bool {
+        self.0.is_locked()
     }
 }
 

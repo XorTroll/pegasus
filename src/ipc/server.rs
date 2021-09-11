@@ -291,15 +291,18 @@ impl<'a> HipcManager<'a> {
 
 impl<'a> IHipcManager for HipcManager<'a> {
     fn convert_current_object_to_domain(&mut self) -> Result<cmif::DomainObjectId> {
+        log_line!("convert_current_object_to_domain!");
         self.server_holder.convert_to_domain()
     }
 
     fn copy_from_current_domain(&mut self, _domain_object_id: cmif::DomainObjectId) -> Result<sf::MoveHandle> {
+        log_line!("copy_from_current_domain!");
         // TODO
         lib_result::ResultNotSupported::make_err()
     }
 
     fn clone_current_object(&mut self) -> Result<sf::MoveHandle> {
+        log_line!("clone_current_object!");
         let (server_handle, client_handle) = svc::create_session(false, 0)?;
 
         self.cloned_object_server_handle = server_handle;
@@ -307,10 +310,12 @@ impl<'a> IHipcManager for HipcManager<'a> {
     }
 
     fn query_pointer_buffer_size(&mut self) -> Result<u16> {
+        log_line!("query_pointer_buffer_size -> size: {}", self.pointer_buf_size);
         Ok(self.pointer_buf_size as u16)
     }
 
     fn clone_current_object_ex(&mut self, _tag: u32) -> Result<sf::MoveHandle> {
+        log_line!("clone_current_object_ex -> size: {}", self.pointer_buf_size);
         // The tag value is unused anyways :P
         self.clone_current_object()
     }
@@ -387,7 +392,8 @@ impl<const P: usize> ServerManager<P> {
                     };
                     // Nothing done on success here, as if the command succeeds it will automatically respond by itself.
                     let mut command_found = false;
-                    for command in target_server.get().get_command_table() {
+                    let command_table = target_server.get().get_command_table();
+                    for command in command_table {
                         if command.matches(ctx.object_info.protocol, rq_id) {
                             command_found = true;
                             let mut server_ctx = ServerContext::new(ctx, DataWalker::empty(), domain_table_clone.clone(), &mut new_sessions);
@@ -536,7 +542,10 @@ impl<const P: usize> ServerManager<P> {
                             cmif::CommandType::Close => {
                                 should_close_session = true;
                             },
-                            _ => return result::ResultUnknownCommandType::make_err()
+                            _ => {
+                                log_line!("Unknown cmd type: {}", command_type as u32);
+                                return result::ResultUnknownCommandType::make_err()
+                            }
                         }
                     },
                     WaitHandleType::Server => {

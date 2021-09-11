@@ -8,7 +8,7 @@ use crate::result as lib_result;
 use super::KAutoObject;
 use super::KResourceLimit;
 use super::KSynchronizationObject;
-use super::ipc::{KClientPort, KClientSession, KServerPort, KServerSession};
+use super::ipc::{KClientPort, KClientSession, KLightClientSession, KLightServerSession, KLightSession, KPort, KServerPort, KServerSession, KSession};
 use super::thread::{KThread, try_get_current_thread};
 use super::thread::get_current_thread;
 use super::svc::LimitableResource;
@@ -77,7 +77,7 @@ impl KHandleTable {
         })
     }
 
-    pub fn allocate_handle_set<K: KAutoObject + 'static>(&mut self, obj: Shared<K>) -> Result<Handle> {
+    pub fn allocate_handle_set_any(&mut self, obj: SharedAny) -> Result<Handle> {
         let mut entry_table = self.entry_table.lock();
 
         result_return_unless!(self.used_entry_count < entry_table.len() as u32, result::ResultOutOfHandles);
@@ -93,8 +93,8 @@ impl KHandleTable {
                 }
 
                 let handle = Self::encode_handle(i as u32, entry.linear_id);
-                obj.get().increment_refcount();
-                entry.obj = Some(obj.as_any());
+                // obj.get().increment_refcount();
+                entry.obj = Some(obj.clone());
                 self.used_entry_count += 1;
 
                 return Ok(handle);
@@ -102,6 +102,10 @@ impl KHandleTable {
         }
 
         result::ResultOutOfHandles::make_err()
+    }
+    
+    pub fn allocate_handle_set<K: KAutoObject + 'static>(&mut self, obj: Shared<K>) -> Result<Handle> {
+        self.allocate_handle_set_any(obj.as_any())
     }
 
     pub fn allocate_handle(&mut self) -> Result<Handle> {
@@ -188,6 +192,54 @@ impl KHandleTable {
         self.get_handle_obj_any(handle)?.cast::<K>()
     }
 
+    pub fn get_handle_auto_obj(&self, handle: Handle) -> Result<Shared<dyn KAutoObject>> {
+        // Due to how great Rust is with downcasting, we have to do this with all KAutoObject types. Luckily there aren't that many of them...
+        let obj = self.get_handle_obj_any(handle)?;
+
+        if let Ok(thread) = obj.cast::<KThread>() {
+            return Ok(thread);
+        }
+
+        if let Ok(process) = obj.cast::<KProcess>() {
+            return Ok(process);
+        }
+        if let Ok(process) = obj.cast::<KResourceLimit>() {
+            return Ok(process);
+        }
+
+        if let Ok(port) = obj.cast::<KPort>() {
+            return Ok(port);
+        }
+        if let Ok(server_port) = obj.cast::<KServerPort>() {
+            return Ok(server_port);
+        }
+        if let Ok(client_port) = obj.cast::<KClientPort>() {
+            return Ok(client_port);
+        }
+
+        if let Ok(session) = obj.cast::<KSession>() {
+            return Ok(session);
+        }
+        if let Ok(server_session) = obj.cast::<KServerSession>() {
+            return Ok(server_session);
+        }
+        if let Ok(client_session) = obj.cast::<KClientSession>() {
+            return Ok(client_session);
+        }
+
+        if let Ok(session) = obj.cast::<KLightSession>() {
+            return Ok(session);
+        }
+        if let Ok(server_session) = obj.cast::<KLightServerSession>() {
+            return Ok(server_session);
+        }
+        if let Ok(client_session) = obj.cast::<KLightClientSession>() {
+            return Ok(client_session);
+        }
+
+        lib_result::ResultInvalidCast::make_err()
+    }
+    
     pub fn get_handle_sync_obj(&self, handle: Handle) -> Result<Shared<dyn KSynchronizationObject>> {
         // Due to how great Rust is with downcasting, we have to do this with all KSynchronizationObject types. Luckily there aren't that many of them...
         let obj = self.get_handle_obj_any(handle)?;
@@ -222,13 +274,26 @@ impl KHandleTable {
 
 // KProcess
 
+const INITIAL_PROCESS_ID: u64 = 0x50;
+
+static mut G_PROCESS_ID_COUNTER: Mutex<u64> = parking_lot::const_mutex(INITIAL_PROCESS_ID);
+
+pub fn new_process_id() -> u64 {
+    unsafe {
+        let mut process_id_counter = G_PROCESS_ID_COUNTER.lock();
+        *process_id_counter += 1;
+        return *process_id_counter;
+    }
+}
+
 pub struct KProcess {
     refcount: AtomicI32,
     waiting_threads: Vec<Shared<KThread>>,
     pub cpu_ctx: Option<cpu::Context>,
     pub npdm: NpdmData,
     pub handle_table: KHandleTable,
-    pub resource_limit: Shared<KResourceLimit>
+    pub resource_limit: Shared<KResourceLimit>,
+    pub id: u64
 }
 
 impl KAutoObject for KProcess {
@@ -263,7 +328,8 @@ impl KProcess {
             cpu_ctx: cpu_ctx,
             npdm: npdm,
             handle_table: KHandleTable::new(handle_table_size)?,
-            resource_limit: resource_limit
+            resource_limit: resource_limit,
+            id: new_process_id()
         }))
     }
 

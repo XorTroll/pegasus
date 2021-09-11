@@ -10,6 +10,7 @@ use crate::kern::ipc::KServerSession;
 use crate::kern::proc::get_current_process;
 use crate::kern::register_named_object;
 use crate::kern::result;
+use crate::kern::thread::get_current_thread;
 use crate::kern::wait_for_sync_objects;
 use crate::result::*;
 use crate::util::Shared;
@@ -214,11 +215,9 @@ pub fn sleep_thread(timeout: i64) -> Result<()> {
         -2 => todo!("YieldToAnyThread"),
         timeout => {
             let duration = Duration::from_nanos(timeout as u64);
-            log_line!("SleepThread with timeout = {}ns", duration.as_nanos());
+            todo!("SleepThread with timeout = {}ns", duration.as_nanos());
         }
-    };
-
-    Ok(())
+    }
 }
 
 pub fn close_handle(handle: Handle) -> Result<()> {
@@ -261,7 +260,8 @@ pub fn send_sync_request(client_session_handle: Handle) -> Result<()> {
     log_line!("SendSyncRequest with handle {:#X}", client_session_handle);
     let client_session = get_current_process().get().handle_table.get_handle_obj::<KClientSession>(client_session_handle)?;
     
-    let rc = client_session.get().send_sync_request(None, None);
+    let rc = client_session.get().send_sync_request(None);
+    log_line!("SendSyncRequest finished with {:?}", rc);
     rc
 }
 
@@ -319,6 +319,7 @@ pub fn accept_session(server_port_handle: Handle) -> Result<Handle> {
 
 pub fn reply_and_receive(handles: &[Handle], reply_target_session_handle: Handle, timeout: i64) -> Result<usize> {
     result_return_unless!(handles.len() <= 64, result::ResultOutOfRange);
+    log_line!("ReplyAndReceive");
 
     let mut sync_objs: Vec<Shared<dyn KSynchronizationObject>> = Vec::with_capacity(handles.len());
     for handle in handles {
@@ -329,16 +330,15 @@ pub fn reply_and_receive(handles: &[Handle], reply_target_session_handle: Handle
     }
 
     if reply_target_session_handle != INVALID_HANDLE {
-        let reply_target_session = get_current_process().get().handle_table.get_handle_obj::<KServerSession>(reply_target_session_handle)?;
+        log_line!("Reply with handle {:#X}", reply_target_session_handle);
+        let mut reply_target_session = get_current_process().get().handle_table.get_handle_obj::<KServerSession>(reply_target_session_handle)?;
 
-        reply_target_session.get().reply(None)?;
+        KServerSession::reply(&mut reply_target_session, None)?;
     }
 
     'w: loop {
         let idx = wait_for_sync_objects(&mut sync_objs, timeout)?;
-
         let server_session = get_current_process().get().handle_table.get_handle_obj::<KServerSession>(handles[idx])?;
-
         log_line!("Receive from handle {:#X}", handles[idx]);
 
         match server_session.get().receive(None) {

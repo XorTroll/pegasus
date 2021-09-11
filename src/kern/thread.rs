@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::thread::Builder;
 use std::thread::JoinHandle;
@@ -67,7 +68,8 @@ impl KCriticalSection {
                 KScheduler::enable_scheduling_from_foreign_thread(scheduled_cores_mask);
 
                 if let Some(thread) = cur_thread.as_ref() {
-                    /* If exec ctx running: */ thread.get().scheduler_wait_event.wait();
+                    /* If exec ctx running: */
+                    get_scheduler_wait_event(thread).wait();
                 }
             }
         }
@@ -126,9 +128,9 @@ pub const IDLE_THREAD_PRIORITY: i32 = 0x40;
 #[repr(u16)]
 pub enum ThreadState {
     Initialized = 0,
-    Waiting     = 1,
-    Runnable    = 2,
-    Terminated  = 3,
+    Waiting = 1,
+    Runnable = 2,
+    Terminated = 3,
 
     ProcessSuspended = 1 << 4,
     ThreadSuspended = 1 << 5,
@@ -181,6 +183,27 @@ pub fn thread_reselection_requested() -> bool {
     }
 }
 
+static mut G_THREAD_SCHEDULER_WAIT_EVENTS: Vec<(Shared<KThread>, ManualResetEvent)> = Vec::new();
+
+fn register_scheduler_wait_event(thread: &Shared<KThread>) {
+    unsafe {
+        G_THREAD_SCHEDULER_WAIT_EVENTS.push((thread.clone(), ManualResetEvent::new(State::Unset)));
+    }
+}
+
+pub fn get_scheduler_wait_event(thread: &Shared<KThread>) -> &'static mut ManualResetEvent {
+    unsafe {
+        for i in 0..G_THREAD_SCHEDULER_WAIT_EVENTS.len() {
+            let (s_thread, s_event) = &mut G_THREAD_SCHEDULER_WAIT_EVENTS[i];
+            if s_thread.ptr_eq(thread) {
+                return s_event;
+            }
+        }
+    }
+
+    panic!("Scheduler wait event not found!");
+}
+
 pub struct KThread {
     refcount: AtomicI32,
     waiting_threads: Vec<Shared<KThread>>,
@@ -189,7 +212,6 @@ pub struct KThread {
     force_pause_state: ThreadState,
     pub sync_result: ResultCode,
     base_priority: i32,
-    pub scheduler_wait_event: ManualResetEvent,
     pub should_be_terminated: bool,
     pub state: ThreadState,
     pub sync_cancelled: bool,
@@ -201,6 +223,7 @@ pub struct KThread {
     pub affinity_mask: i64,
     pub owner_process: Option<Shared<KProcess>>,
     pub cpu_exec_ctx: Option<cpu::ExecutionContext>,
+    pub emu_tlr: [u8; 0x100],
     pub siblings_per_core: Vec<Option<Shared<KThread>>>,
     pub withholder: Option<Vec<Shared<KThread>>>,
     pub withholder_entry: Option<Shared<KThread>>,
@@ -263,16 +286,15 @@ impl KThread {
 
         // TODO: force pause flags if owner paused...
 
-        Ok(Shared::new(Self {
+        let thread = Shared::new(Self {
             refcount: AtomicI32::new(1),
             waiting_threads: Vec::new(),
             has_exited: false,
             should_be_terminated: false,
             is_schedulable: true,
             force_pause_state: ThreadState::Initialized,
-            sync_result: ResultSuccess::make(),
+            sync_result: result::ResultNoThread::make(),
             base_priority: priority,
-            scheduler_wait_event: ManualResetEvent::new(State::Unset),
             state: ThreadState::Initialized,
             sync_cancelled: false,
             waiting_sync: false,
@@ -283,6 +305,7 @@ impl KThread {
             affinity_mask: bit!(cpu_core as i64),
             owner_process: owner_process,
             cpu_exec_ctx: cpu_exec_ctx,
+            emu_tlr: [0; 0x100],
             siblings_per_core: siblings_per_core,
             withholder: None,
             withholder_entry: None,
@@ -291,7 +314,10 @@ impl KThread {
             host_thread_handle: None,
             ctx: KThreadContext::new(),
             id: new_thread_id()
-        }))
+        });
+
+        register_scheduler_wait_event(&thread);
+        Ok(thread)
     }
 
     pub fn new_host(owner_process: Option<Shared<KProcess>>, host_thread_name: String, priority: i32, cpu_core: i32) -> Result<Shared<Self>> {
@@ -320,10 +346,10 @@ impl KThread {
             // TODO: ensure thread is started...?
 
             if cur_state == ThreadState::Runnable {
-                thread.get().scheduler_wait_event.set();
+                get_scheduler_wait_event(thread).set();
             }
             else {
-                thread.get().scheduler_wait_event.reset();
+                get_scheduler_wait_event(thread).reset();
             }
 
             return;
@@ -450,6 +476,19 @@ impl KThread {
 
     pub fn is_termination_requested(&self) -> bool {
         self.should_be_terminated || (self.state == ThreadState::Terminated)
+    }
+
+    pub fn is_emu_thread(&self) -> bool {
+        self.cpu_exec_ctx.is_none()
+    }
+
+    pub fn get_tlr_ptr(&mut self) -> *mut u8 {
+        if let Some(exec_ctx) = self.cpu_exec_ctx.as_mut() {
+            exec_ctx.tlr.data.as_mut_ptr()
+        }
+        else {
+            self.emu_tlr.as_mut_ptr()
+        }
     }
 }
 
@@ -669,6 +708,7 @@ impl KPriorityQueue {
 
     pub fn transfer_thread_to_core(&mut self, priority: i32, dst_core: i32, thread: &Shared<KThread>) {
         let src_core = thread.get().active_core;
+
         if src_core != dst_core {
             thread.get().active_core = dst_core;
 
@@ -759,22 +799,14 @@ impl KScheduler {
         loop {
             *scheduler.needs_scheduling.lock() = false;
             // TODO: memory barrier? (Ryujinx does so, might not be necessary at all here...)
-            let selected_thread = match scheduler.selected_thread.lock().as_ref() {
-                Some(thread) => Some(thread.clone()),
-                None => None
-            };
+            let selected_thread = scheduler.selected_thread.lock().clone();
             let next_thread = scheduler.pick_next_thread(selected_thread);
 
             if !next_thread.ptr_eq(&scheduler.idle_thread) {
-                scheduler.idle_thread.get().scheduler_wait_event.reset();
+                get_scheduler_wait_event(&next_thread).set();
 
-                // Note: to avoid locking the idle_thread by doing "scheduler.idle_thread.get().scheduler_wait_event.wait()", swap it temporarily with a dummy event variable.
-                // While kinda cursed, this seems to work fine...
-                next_thread.get().scheduler_wait_event.set();
-                let mut temp_idle_thread_scheduler_wait_event = ManualResetEvent::new(State::Set);
-                std::mem::swap(&mut temp_idle_thread_scheduler_wait_event, &mut scheduler.idle_thread.get().scheduler_wait_event);
-                temp_idle_thread_scheduler_wait_event.wait();
-                std::mem::swap(&mut temp_idle_thread_scheduler_wait_event, &mut scheduler.idle_thread.get().scheduler_wait_event);
+                get_scheduler_wait_event(&scheduler.idle_thread).reset();
+                get_scheduler_wait_event(&scheduler.idle_thread).wait();
             }
 
             scheduler.idle_interrupt_event.wait();
@@ -788,17 +820,18 @@ impl KScheduler {
         })
     }
 
-    fn pick_next_thread(&mut self, mut selected_thread: Option<Shared<KThread>>) -> Shared<KThread> {
+    fn pick_next_thread(&mut self, selected_thread: Option<Shared<KThread>>) -> Shared<KThread> {
+        let mut sel_thread = selected_thread.clone();
         loop {
-            if let Some(thread) = selected_thread.as_ref() {
-                let thread_ctx_locked = thread.get().ctx.lock();
-                if thread_ctx_locked {
-                    self.switch_to(Some(thread.clone()));
+            if let Some(sel_thread_v) = sel_thread.as_ref() {
+                let thread_ctx_lock = sel_thread_v.get().ctx.lock();
+                if thread_ctx_lock {
+                    self.switch_to(Some(sel_thread_v.clone()));
                     if !*self.needs_scheduling.lock() {
-                        return self.selected_thread.lock().as_ref().unwrap().clone();
+                        return sel_thread_v.clone();
                     }
 
-                    thread.get().ctx.unlock();
+                    sel_thread_v.get().ctx.unlock();
                 }
                 else {
                     return self.idle_thread.clone();
@@ -810,7 +843,8 @@ impl KScheduler {
             }
 
             *self.needs_scheduling.lock() = false;
-            selected_thread = Some(self.selected_thread.lock().as_ref().unwrap().clone());
+            // memory barrier?
+            sel_thread = Some(self.selected_thread.lock().as_ref().unwrap().clone());
         }
     }
 
@@ -854,12 +888,8 @@ impl KScheduler {
     pub fn schedule(&mut self) {
         *self.needs_scheduling.lock() = false;
 
-        let cur_thread = get_current_thread();
-
-        let selected_thread = match self.selected_thread.lock().as_ref() {
-            Some(thread) => Some(thread.clone()),
-            None => None
-        };
+        let mut cur_thread = get_current_thread();
+        let selected_thread = self.selected_thread.lock().clone();
 
         if let Some(sel_thread) = selected_thread.as_ref() {
             if cur_thread.ptr_eq(sel_thread) {
@@ -867,7 +897,7 @@ impl KScheduler {
             }
         }
 
-        cur_thread.get().scheduler_wait_event.reset();
+        get_scheduler_wait_event(&cur_thread).reset();
         cur_thread.get().ctx.unlock();
 
         for core in 0..CPU_CORE_COUNT as i32 {
@@ -875,10 +905,10 @@ impl KScheduler {
         }
 
         let next_thread = self.pick_next_thread(selected_thread);
-        next_thread.get().scheduler_wait_event.set();
+        get_scheduler_wait_event(&next_thread).set();
 
         if /* current thread exec ctx running? */ true {
-            cur_thread.get().scheduler_wait_event.wait();
+            get_scheduler_wait_event(&cur_thread).wait();
         }
         else {
             cur_thread.get().is_schedulable = false;
@@ -933,7 +963,7 @@ impl KScheduler {
                         Some(selected_thread) => suggested_thread.ptr_eq(selected_thread),
                         None => false
                     };
-                    if (active_core < 0) || is_scheduler_selected_thread {
+                    if (active_core < 0) || !is_scheduler_selected_thread {
                         dst_thread = Some(suggested_thread.clone());
                         break;
                     }
@@ -958,6 +988,7 @@ impl KScheduler {
 
                         let priority = orig_selected_thread.as_ref().unwrap().get().priority;
                         get_priority_queue().transfer_thread_to_core(priority, core, orig_selected_thread.as_ref().unwrap());
+                        scheduled_cores_mask |= get_scheduler(core).select_thread(Some(orig_selected_thread.as_ref().unwrap().clone()));
                     }
                 }
             }

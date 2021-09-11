@@ -9,7 +9,7 @@ pub fn write_command_on_ipc_buffer(ctx: &mut CommandContext, command_type: Comma
         let has_special_header = ctx.in_params.send_process_id || ctx.in_params.copy_handles.len() > 0 || ctx.in_params.move_handles.len() > 0;
         let data_word_count = (data_size + 3) / 4;
         let command_header = ipc_buf as *mut CommandHeader;
-        *command_header = CommandHeader::new(command_type as u32, ctx.send_statics.len() as u32, ctx.send_buffers.len() as u32, ctx.receive_buffers.len() as u32, ctx.exchange_buffers.len() as u32, data_word_count, ctx.receive_statics.len() as u32, has_special_header);
+        *command_header = CommandHeader::new(command_type as u32, ctx.send_statics.len() as u32, ctx.send_buffers.len() as u32, ctx.receive_buffers.len() as u32, ctx.exchange_buffers.len() as u32, data_word_count, 0, ctx.receive_statics.len() as u32, has_special_header);
         ipc_buf = command_header.offset(1) as *mut u8;
 
         if has_special_header {

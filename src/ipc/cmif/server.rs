@@ -60,7 +60,7 @@ pub fn write_command_response_on_ipc_buffer(ctx: &mut CommandContext, command_ty
 
         let data_word_count = (data_size + 3) / 4;
         let has_special_header = ctx.out_params.send_process_id || (ctx.out_params.copy_handles.len() > 0) || (ctx.out_params.move_handles.len() > 0);
-        *command_header = CommandHeader::new(command_type as u32, ctx.send_statics.len() as u32, ctx.send_buffers.len() as u32, ctx.receive_buffers.len() as u32, ctx.exchange_buffers.len() as u32, data_word_count, ctx.receive_statics.len() as u32, has_special_header);
+        *command_header = CommandHeader::new(command_type as u32, ctx.send_statics.len() as u32, ctx.send_buffers.len() as u32, ctx.receive_buffers.len() as u32, ctx.exchange_buffers.len() as u32, data_word_count, 0, ctx.receive_statics.len() as u32, has_special_header);
 
         if has_special_header {
             let special_header = ipc_buf as *mut CommandSpecialHeader;
