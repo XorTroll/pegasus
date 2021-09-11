@@ -118,25 +118,25 @@ fn get_service_handle(name: ServiceName) -> Result<Handle> {
     svc::connect_to_port(service_info.port_handle)
 }
 
-static mut G_SM_READY: Option<ManualResetEvent> = None;
+static mut G_READY: Option<ManualResetEvent> = None;
 
 fn start_ready() {
     unsafe {
-        if G_SM_READY.is_none() {
-            G_SM_READY = Some(ManualResetEvent::new(State::Unset));
+        if G_READY.is_none() {
+            G_READY = Some(ManualResetEvent::new(State::Unset));
         }
     }
 }
 
 fn notify_ready() {
     unsafe {
-        G_SM_READY.as_mut().unwrap().set();
+        G_READY.as_mut().unwrap().set();
     }
 }
 
 pub fn wait_ready() {
     unsafe {
-        G_SM_READY.as_mut().unwrap().wait();
+        G_READY.as_mut().unwrap().wait();
     }
 }
 

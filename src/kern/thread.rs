@@ -488,12 +488,6 @@ impl KThread {
             self.emu_tlr.as_mut_ptr()
         }
     }
-
-    pub fn on_interrupt(&self) {
-        if self.is_schedulable {
-            get_scheduler(self.cur_core).schedule();
-        }
-    }
 }
 
 #[thread_local]

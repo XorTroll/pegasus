@@ -19,7 +19,7 @@ impl EmulatedProcess {
                 flags: MetaFlags::new(true, npdm::AddressSpaceType::AS64Bit, false, false),
                 reserved_2: 0,
                 main_thread_priority: main_thread_priority as u8,
-                main_thread_cpu_core: 2, // 3,
+                main_thread_cpu_core: 2, // TODO: why does core 3 not work properly?
                 reserved_3: [0; 0x4],
                 system_resource_size: 0,
                 version: 0,

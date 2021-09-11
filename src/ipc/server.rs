@@ -610,7 +610,6 @@ impl<const P: usize> ServerManager<P> {
         
         let sm = client::new_named_port_object::<sm::UserInterface>()?;
         let service_handle = sm.get().register_service(service_name, false, S::get_max_sesssions())?;
-        log_line!("Registered service! handle: {:#X}", service_handle.handle);
         self.register_server::<S>(service_handle.handle, service_name);
         sm.get().detach_client(sf::ProcessId::new())?;
         Ok(())

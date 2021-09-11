@@ -7,24 +7,24 @@ pub struct ServiceName {
 }
 
 impl ServiceName {
-    const fn default_get(name_u8: &[u8], idx: usize) -> u8 {
-        if idx < name_u8.len() {
-            name_u8[idx]
-        }
-        else {
-            0
-        }
-    }
-
     pub const fn new(name: &str) -> Self {
         let name_u8 = name.as_bytes();
 
+        const fn name_at(name_u8: &[u8], idx: usize) -> u8 {
+            if idx < name_u8.len() {
+                name_u8[idx]
+            }
+            else {
+                0
+            }
+        }
+
         Self {
             name: [
-                Self::default_get(name_u8, 0), Self::default_get(name_u8, 1),
-                Self::default_get(name_u8, 2), Self::default_get(name_u8, 3),
-                Self::default_get(name_u8, 4), Self::default_get(name_u8, 5),
-                Self::default_get(name_u8, 6), Self::default_get(name_u8, 7)
+                name_at(name_u8, 0), name_at(name_u8, 1),
+                name_at(name_u8, 2), name_at(name_u8, 3),
+                name_at(name_u8, 4), name_at(name_u8, 5),
+                name_at(name_u8, 6), name_at(name_u8, 7)
             ]
         }
     }
