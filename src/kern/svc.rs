@@ -1,4 +1,5 @@
 use scopeguard::{guard, ScopeGuard};
+use crate::emu::cpu;
 use crate::kern::KAutoObject;
 use crate::kern::KSynchronizationObject;
 use crate::kern::find_named_object;
@@ -15,10 +16,12 @@ use crate::result::*;
 use crate::util::Shared;
 use crate::util;
 use core::mem;
+use core::panic;
 use std::time::Duration;
 
 use super::ipc::KLightSession;
 use super::ipc::KSession;
+use super::thread::get_current_thread;
 
 pub type Handle = u32;
 
@@ -208,7 +211,22 @@ impl BreakReason {
     }
 }
 
-// Note: the actual impl of SVCs would have (ptr, size) for args/bufs/strings, but Rust's slice, &str, etc. makes my life way easier here ;)
+// Normal processes reschedule themselves as an interrupt after an SVC call -- since this is necessary for any process/thread, we use this guard/macro so that emulated processes behave the same
+macro_rules! register_emu_proc_post_svc_guard {
+    () => {
+        // Just create the guard and cancel it if it's not an emulated process
+        let post_svc_guard = guard((), |()| {
+            cpu::on_interrupt();
+        });
+
+        let is_not_emu_thread = !get_current_thread().get().is_emu_thread();
+        if is_not_emu_thread {
+            ScopeGuard::into_inner(post_svc_guard);
+        }
+    };
+}
+
+// Note: the actual impl of SVCs would have (ptr, size) for args/bufs/strings, but Rust's slice, &str, etc. types make my life way easier here ;)
 
 pub fn sleep_thread(timeout: i64) -> Result<()> {
     match timeout {
@@ -223,10 +241,14 @@ pub fn sleep_thread(timeout: i64) -> Result<()> {
 }
 
 pub fn close_handle(handle: Handle) -> Result<()> {
+    register_emu_proc_post_svc_guard!();
+
     get_current_process().get().handle_table.close_handle(handle)
 }
 
 pub fn wait_synchronization(handles: &[Handle], timeout: i64) -> Result<usize> {
+    register_emu_proc_post_svc_guard!();
+    
     result_return_unless!(handles.len() <= 64, result::ResultOutOfRange);
 
     let mut sync_objs: Vec<Shared<dyn KSynchronizationObject>> = Vec::with_capacity(handles.len());
@@ -241,6 +263,8 @@ pub fn wait_synchronization(handles: &[Handle], timeout: i64) -> Result<usize> {
 }
 
 pub fn connect_to_named_port(name: &str) -> Result<Handle> {
+    register_emu_proc_post_svc_guard!();
+    
     result_return_unless!(name.len() <= 11, result::ResultOutOfRange);
 
     log_line!("[ConnectToNamedPort] connecting to port: '{}'", name);
@@ -259,6 +283,8 @@ pub fn connect_to_named_port(name: &str) -> Result<Handle> {
 }
 
 pub fn send_sync_request(client_session_handle: Handle) -> Result<()> {
+    register_emu_proc_post_svc_guard!();
+    
     // log_line!("SendSyncRequest with handle {:#X}", client_session_handle);
     let client_session = get_current_process().get().handle_table.get_handle_obj::<KClientSession>(client_session_handle)?;
     
@@ -267,6 +293,8 @@ pub fn send_sync_request(client_session_handle: Handle) -> Result<()> {
 }
 
 pub fn break_(reason: BreakReason, arg: &[u8]) -> Result<()> {
+    register_emu_proc_post_svc_guard!();
+    
     if reason.is_notification_only() {
         let actual_reason = reason.without_notification_flag();
         log_line!("[Break] Notified, reason: {:?}", actual_reason);
@@ -285,11 +313,15 @@ pub fn break_(reason: BreakReason, arg: &[u8]) -> Result<()> {
 }
 
 pub fn output_debug_string(msg: &str) -> Result<()> {
+    register_emu_proc_post_svc_guard!();
+    
     log_line!("[OutputDebugString] {}", msg);
     Ok(())
 }
 
 pub fn create_session(is_light: bool, _name_addr: u64) -> Result<(Handle, Handle)> {
+    register_emu_proc_post_svc_guard!();
+    
     get_current_process().get().resource_limit.get().reserve(LimitableResource::Session, 1, None)?;
 
     let (server_session, client_session) = match is_light {
@@ -319,6 +351,8 @@ pub fn create_session(is_light: bool, _name_addr: u64) -> Result<(Handle, Handle
 }
 
 pub fn accept_session(server_port_handle: Handle) -> Result<Handle> {
+    register_emu_proc_post_svc_guard!();
+    
     let server_port = get_current_process().get().handle_table.get_handle_obj::<KServerPort>(server_port_handle)?;
 
     let server_session_handle = get_current_process().get().handle_table.allocate_handle()?;
@@ -344,6 +378,8 @@ pub fn accept_session(server_port_handle: Handle) -> Result<Handle> {
 }
 
 pub fn reply_and_receive(handles: &[Handle], reply_target_session_handle: Handle, timeout: i64) -> Result<usize> {
+    register_emu_proc_post_svc_guard!();
+    
     result_return_unless!(handles.len() <= 64, result::ResultOutOfRange);
 
     let mut sync_objs: Vec<Shared<dyn KSynchronizationObject>> = Vec::with_capacity(handles.len());
@@ -355,6 +391,7 @@ pub fn reply_and_receive(handles: &[Handle], reply_target_session_handle: Handle
     }
 
     if reply_target_session_handle != INVALID_HANDLE {
+        // log_line!("Reply with {:#X}", reply_target_session_handle);
         let mut reply_target_session = get_current_process().get().handle_table.get_handle_obj::<KServerSession>(reply_target_session_handle)?;
 
         KServerSession::reply(&mut reply_target_session, None)?;
@@ -362,6 +399,7 @@ pub fn reply_and_receive(handles: &[Handle], reply_target_session_handle: Handle
 
     'w: loop {
         let idx = wait_for_sync_objects(&mut sync_objs, timeout)?;
+        // log_line!("Receive with {:#X}", handles[idx]);
         let server_session = get_current_process().get().handle_table.get_handle_obj::<KServerSession>(handles[idx])?;
 
         match server_session.get().receive(None) {
@@ -378,6 +416,8 @@ pub fn reply_and_receive(handles: &[Handle], reply_target_session_handle: Handle
 }
 
 pub fn create_port(max_sessions: u32, is_light: bool, name_addr: u64) -> Result<(Handle, Handle)> {
+    register_emu_proc_post_svc_guard!();
+    
     let port = KPort::new(max_sessions, is_light, name_addr);
 
     let server_port_handle = get_current_process().get().handle_table.allocate_handle_set(port.get().server_port.clone())?;
@@ -393,6 +433,8 @@ pub fn create_port(max_sessions: u32, is_light: bool, name_addr: u64) -> Result<
 }
 
 pub fn manage_named_port(name: &str, max_sessions: u32) -> Result<Handle> {
+    register_emu_proc_post_svc_guard!();
+    
     result_return_unless!(name.len() <= 11, result::ResultOutOfRange);
 
     let port = KPort::new(max_sessions, false, 0);
@@ -410,6 +452,8 @@ pub fn manage_named_port(name: &str, max_sessions: u32) -> Result<Handle> {
 }
 
 pub fn connect_to_port(client_port_handle: Handle) -> Result<Handle> {
+    register_emu_proc_post_svc_guard!();
+    
     let mut client_port = get_current_process().get().handle_table.get_handle_obj::<KClientPort>(client_port_handle)?;
     let client_session_handle = get_current_process().get().handle_table.allocate_handle()?;
 

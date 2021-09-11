@@ -324,6 +324,12 @@ impl Message {
         }
     }
 
+    pub fn clear(&self) {
+        unsafe {
+            std::ptr::write_bytes(self.buf, 0, self.size);
+        }
+    }
+
     #[inline]
     pub fn from_request(request: &KSessionRequest) -> Self {
         Self::new(&request.client_thread, request.custom_cmd_buf)
@@ -661,16 +667,21 @@ impl KServerSession {
         let server_msg_size = server_msg.get_size();
         let client_msg_size = client_msg.get_size();
 
+        client_msg.clear();
+
         let receive_static_list = server_msg.get_receive_statics();
+        if !receive_static_list.is_empty() {
+            todo!("Receive static support");
+        }
+
         client_msg.set_header(server_header);
 
         if server_header.get_has_special_header() {
             // clientHeader.MoveHandlesCount == 0 here? (...)
 
-            client_msg.set_special_header(client_special_header);
+            client_msg.set_special_header(server_special_header);
 
             if server_special_header.get_send_process_id() {
-                // TODO
                 client_msg.set_process_id(server_process.get().id);
             }
 
@@ -747,7 +758,13 @@ impl KServerSession {
         let server_msg_size = server_msg.get_size();
         let client_msg_size = client_msg.get_size();
 
+        server_msg.clear();
+
         let receive_static_list = server_msg.get_receive_statics();
+        if !receive_static_list.is_empty() {
+            todo!("Receive static support");
+        }
+
         server_msg.set_header(client_header);
 
         if client_header.get_has_special_header() {

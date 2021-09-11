@@ -5,7 +5,7 @@ use std::ffi::c_void;
 use crate::util;
 use crate::result::*;
 use crate::emu::kern as emu_kern;
-use crate::kern::thread::{self, get_scheduler};
+use crate::kern::thread::{self, get_current_thread, get_scheduler};
 use crate::kern::svc;
 use crate::ldr;
 use crate::ldr::result as ldr_result;
@@ -98,6 +98,16 @@ pub type HookedInstructionHandlerFn = Box<dyn Fn(ContextHandle) -> Result<()>>;
 
 const SVC_INSN_BASE: u32 = 0xD4000001;
 
+pub fn on_interrupt() {
+    let is_schedulable = get_current_thread().get().is_schedulable;
+    if is_schedulable {
+        let cur_core = get_current_thread().get().cur_core;
+        // log_line!("Scheduling in core {}...", cur_core);
+        get_scheduler(cur_core).schedule();
+        // log_line!("Scheduled in core {}!", cur_core);
+    }
+}
+
 fn unicorn_code_hook(uc_h: Handle, address: u64, _size: usize) {
     let ctx_h = ContextHandle(uc_h);
     let cur_insn: u32 = ctx_h.read_memory_val(address).unwrap();
@@ -130,12 +140,7 @@ fn unicorn_intr_hook(_uc_h: Handle, _intr_no: u32) {
 
     // log_line!("Interrupt {}!", intr_no);
 
-    let cur_thread = thread::get_current_thread();
-    let is = cur_thread.get().is_schedulable;
-    if is {
-        let cur_core = cur_thread.get().cur_core;
-        get_scheduler(cur_core).schedule();
-    }
+    on_interrupt();
 }
 
 fn create_memory_region(segment_file_data: Vec<u8>, address: u64, is_compressed: bool, section_size: usize, perm: Permission) -> Result<MemoryRegion> {

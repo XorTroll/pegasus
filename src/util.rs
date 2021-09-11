@@ -527,7 +527,9 @@ impl SharedAny {
     pub fn cast<U: Any + Send + Sync>(&self) -> Result<Shared<U>> {
         match self.0.clone().downcast::<Mutex<U>>() {
             Ok(arc) => Ok(Shared(arc)),
-            Err(_) => result::ResultInvalidCast::make_err()
+            Err(_) => {
+                result::ResultInvalidCast::make_err()
+            }
         }
     }
 }

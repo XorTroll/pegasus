@@ -42,6 +42,8 @@ pub mod sm;
 pub mod fs;
 use fs::FileSystem;
 
+pub mod set;
+
 pub mod proc;
 
 fn main() -> result::Result<()> {
@@ -76,7 +78,7 @@ fn main() -> result::Result<()> {
     // log_line!("{:?}", npdm);
 
     kern::initialize()?;
-    proc::sm::start_process()?;
+    proc::initialize()?;
 
     let mut cpu_ctx = emu::cpu::Context::new();
     

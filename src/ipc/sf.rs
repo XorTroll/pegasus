@@ -2,13 +2,15 @@ use super::*;
 use crate::kern::svc;
 use core::mem;
 
-pub mod hipc;
-
 pub mod client;
+
+pub mod hipc;
 
 pub mod sm;
 
-#[derive(Copy, Clone)]
+pub mod set;
+
+#[derive(Clone)]
 pub struct Buffer<const A: BufferAttribute, const S: usize> {
     pub buf: *const u8,
     pub size: usize
@@ -103,7 +105,7 @@ pub type OutPointerBuffer = Buffer<{bit_group!{ BufferAttribute [Out, Pointer] }
 pub type InFixedPointerBuffer<T> = Buffer<{bit_group!{ BufferAttribute [In, Pointer, FixedSize] }}, {mem::size_of::<T>()}>;
 pub type OutFixedPointerBuffer<T> = Buffer<{bit_group!{ BufferAttribute [Out, Pointer, FixedSize] }}, {mem::size_of::<T>()}>;
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct Handle<const M: HandleMode> {
     pub handle: svc::Handle
 }
@@ -117,7 +119,7 @@ impl<const M: HandleMode> Handle<M> {
 pub type CopyHandle = Handle<{HandleMode::Copy}>;
 pub type MoveHandle = Handle<{HandleMode::Move}>;
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct ProcessId {
     pub process_id: u64
 }

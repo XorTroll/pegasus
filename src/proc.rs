@@ -4,6 +4,8 @@ use crate::result::*;
 
 pub mod sm;
 
+pub mod set;
+
 pub struct EmulatedProcess {
 }
 
@@ -17,7 +19,7 @@ impl EmulatedProcess {
                 flags: MetaFlags::new(true, npdm::AddressSpaceType::AS64Bit, false, false),
                 reserved_2: 0,
                 main_thread_priority: main_thread_priority as u8,
-                main_thread_cpu_core: 3,
+                main_thread_cpu_core: 2, // 3,
                 reserved_3: [0; 0x4],
                 system_resource_size: 0,
                 version: 0,
@@ -158,4 +160,15 @@ impl EmulatedProcess {
         })
     }
 
+}
+
+pub fn initialize() -> Result<()> {
+    // First initialize sm, and wait until it's ready
+    sm::start_process()?;
+    sm::wait_ready();
+
+    // Then initialize everything else
+    set::start_process()?;
+
+    Ok(())
 }

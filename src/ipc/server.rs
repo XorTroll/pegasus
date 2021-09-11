@@ -69,7 +69,7 @@ impl<const M: HandleMode> CommandParameter<sf::Handle<M>> for sf::Handle<M> {
     }
 
     fn before_response_write(handle: &Self, ctx: &mut ServerContext) -> Result<()> {
-        ctx.ctx.out_params.push_handle(*handle)
+        ctx.ctx.out_params.push_handle(handle.clone())
     }
 
     fn after_response_write(_handle: &Self, _ctx: &mut ServerContext) -> Result<()> {
@@ -610,6 +610,7 @@ impl<const P: usize> ServerManager<P> {
         
         let sm = client::new_named_port_object::<sm::UserInterface>()?;
         let service_handle = sm.get().register_service(service_name, false, S::get_max_sesssions())?;
+        log_line!("Registered service! handle: {:#X}", service_handle.handle);
         self.register_server::<S>(service_handle.handle, service_name);
         sm.get().detach_client(sf::ProcessId::new())?;
         Ok(())

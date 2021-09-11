@@ -156,8 +156,8 @@ pub fn write_control_command_on_ipc_buffer(ctx: &mut CommandContext, request_id:
 pub fn read_control_command_response_from_ipc_buffer(ctx: &mut CommandContext) -> Result<()> {
     unsafe {
         let ipc_buf = get_ipc_buffer();
-
         read_command_response_from_ipc_buffer(ctx);
+
         let mut data_offset = get_aligned_data_offset(ctx.out_params.data_words_offset, ipc_buf);
 
         let data_header = data_offset as *mut DataHeader;

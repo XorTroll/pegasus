@@ -218,6 +218,7 @@ impl KHandleTable {
             return Ok(client_session);
         }
 
+        log_line!("Unable to cast to KSynchronizationObject...");
         lib_result::ResultInvalidCast::make_err()
     }
 }

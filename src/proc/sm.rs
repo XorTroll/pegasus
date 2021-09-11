@@ -1,6 +1,9 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use parking_lot::Mutex;
+use rsevents::{Awaitable, ManualResetEvent, State};
 use crate::ipc::sf;
-use crate::ipc::sf::client::sm::IUserInterface;
+use crate::ipc::sf::sm::IUserInterface;
 use crate::ipc::server;
 use crate::kern::svc::Handle;
 use crate::kern::{proc::KProcess, thread::KThread, svc};
@@ -11,8 +14,8 @@ use super::EmulatedProcess;
 // Code for the emulated 'sm' process
 
 pub fn start_process() -> Result<()> {
+    start_ready();
     let npdm = EmulatedProcess::make_npdm("sm", 27, 0x2000, 0x0100_0000_0000_1004, vec![
-        svc::SvcId::ManageNamedPort,
         /* ... */
     ], 512)?;
 
@@ -98,11 +101,11 @@ fn register_service(name: ServiceName, process_id: u64, max_sessions: u32, is_li
         owner_process_id: process_id,
         max_sessions: max_sessions,
         is_light: is_light,
-        port_handle: server_handle
+        port_handle: client_handle
     };
     register_service_info(service_info);
 
-    Ok(client_handle)
+    Ok(server_handle)
 }
 
 fn unregister_service(name: ServiceName, process_id: u64) -> Result<()> {
@@ -113,6 +116,28 @@ fn get_service_handle(name: ServiceName) -> Result<Handle> {
     let service_info = find_service_info(name)?;
 
     svc::connect_to_port(service_info.port_handle)
+}
+
+static mut G_SM_READY: Option<ManualResetEvent> = None;
+
+fn start_ready() {
+    unsafe {
+        if G_SM_READY.is_none() {
+            G_SM_READY = Some(ManualResetEvent::new(State::Unset));
+        }
+    }
+}
+
+fn notify_ready() {
+    unsafe {
+        G_SM_READY.as_mut().unwrap().set();
+    }
+}
+
+pub fn wait_ready() {
+    unsafe {
+        G_SM_READY.as_mut().unwrap().wait();
+    }
 }
 
 pub struct UserInterface {
@@ -210,5 +235,7 @@ fn main_thread_fn() {
     let mut manager: server::ServerManager<0x0> = server::ServerManager::new().unwrap();
 
     manager.register_named_port_server::<UserInterface>().unwrap();
+
+    notify_ready();
     manager.loop_process().unwrap();
 }
