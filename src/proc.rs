@@ -170,5 +170,6 @@ pub fn initialize() -> Result<()> {
     // Then initialize everything else
     set::start_process()?;
 
+    // TODO: also wait for all the other processes?
     Ok(())
 }

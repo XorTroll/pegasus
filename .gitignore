@@ -1,2 +1,7 @@
 .vscode/
 target/
+build/
+*.elf
+*.nso
+*.npdm
+*.nsp
