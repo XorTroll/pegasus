@@ -1,5 +1,3 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use parking_lot::Mutex;
 use rsevents::{Awaitable, ManualResetEvent, State};
 use crate::ipc::sf;

@@ -37,6 +37,8 @@ pub mod emu;
 
 pub mod kern;
 
+pub mod os;
+
 pub mod sm;
 
 pub mod fs;
@@ -51,15 +53,18 @@ fn main() -> result::Result<()> {
 
     let orig_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
+        // Generate backtrace
+        // TODO: backtrace without panic calls, just everything before the panic?
+        let backtrace = Backtrace::new();
+
         // Guard to prevent other thread logs to mix with the panic printing
         let _guard = make_log_guard();
 
         // Invoke the default panic handler
         orig_hook(panic_info);
 
-        // Generate and print backtrace, guarding everything to stop other threads from logging
+        // Print the backtrace, guarding everything to stop other threads from logging
         println!("A panic happened in this thread:");
-        let backtrace = Backtrace::new();
         println!("{:?}", backtrace);
 
         // Exit everything, panic = unrecoverable error
@@ -97,8 +102,6 @@ fn main() -> result::Result<()> {
 
     loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
-        log_line!("HOSTMAIN 1 sec elapsed");
+        log_line!("Main --- loop update");
     }
-
-    Ok(())
 }

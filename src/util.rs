@@ -206,12 +206,6 @@ pub fn align_up<V: Into<usize> + From<usize>>(value: V, align: usize) -> V {
     V::from((value.into() + mask) & !mask)
 }
 
-pub fn align_down<V: Into<usize> + From<usize>>(value: V, align: usize) -> V {
-    // TODO: make const?
-    let mask = align - 1;
-    V::from(value.into() & !mask)
-}
-
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct CString<const S: usize> {

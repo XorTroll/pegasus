@@ -10,7 +10,7 @@ use rsevents::State;
 use crate::emu::cpu;
 use crate::util::{Shared, RecursiveLock, new_recursive_lock, trailing_zero_count};
 use crate::result::*;
-
+use crate::os::ThreadLocalRegion;
 use super::{KAutoObject, KFutureSchedulerObject, get_time_manager};
 use super::KSynchronizationObject;
 use super::proc::KProcess;
@@ -486,6 +486,12 @@ impl KThread {
         }
         else {
             self.emu_tlr.as_mut_ptr()
+        }
+    }
+
+    pub fn get_thread_local_region(&mut self) -> &'static mut ThreadLocalRegion {
+        unsafe {
+            &mut *(self.get_tlr_ptr() as *mut ThreadLocalRegion)
         }
     }
 }

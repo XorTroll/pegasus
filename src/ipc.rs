@@ -6,7 +6,7 @@ use crate::kern::thread::get_current_thread;
 use crate::result::*;
 use crate::result as lib_result;
 use crate::kern::svc;
-use crate::util::align_down;
+use crate::util::align_up;
 
 #[macro_export]
 macro_rules! ipc_cmif_interface_define_command {
@@ -27,7 +27,7 @@ macro_rules! ipc_cmif_interface_define_command {
                 $( $crate::ipc::server::CommandParameter::<_>::before_response_write(&$out_param_name, &mut ctx)?; )*
                 ctx.ctx.out_params.data_size = ctx.raw_data_walker.get_offset() as u32;
 
-                $crate::ipc::cmif::server::write_request_command_response_on_ipc_buffer(&mut ctx.ctx, $crate::result::ResultSuccess::make(), $crate::ipc::cmif::CommandType::Request);
+                $crate::ipc::cmif::server::write_request_command_response_on_msg_buffer(&mut ctx.ctx, $crate::result::ResultSuccess::make(), $crate::ipc::cmif::CommandType::Request);
 
                 ctx.raw_data_walker = $crate::ipc::DataWalker::new(ctx.ctx.out_params.data_offset);
                 $( $crate::ipc::server::CommandParameter::<_>::after_response_write(&$out_param_name, &mut ctx)?; )*
@@ -57,7 +57,7 @@ macro_rules! ipc_tipc_interface_define_command {
                 $( $crate::ipc::server::CommandParameter::<_>::before_response_write(&$out_param_name, &mut ctx)?; )*
                 ctx.ctx.out_params.data_size = ctx.raw_data_walker.get_offset() as u32;
 
-                $crate::ipc::tipc::server::write_request_command_response_on_ipc_buffer(&mut ctx.ctx, $crate::result::ResultSuccess::make(), 16); // TODO: is this command type actually read/used/relevant?
+                $crate::ipc::tipc::server::write_request_command_response_on_msg_buffer(&mut ctx.ctx, $crate::result::ResultSuccess::make(), 16); // TODO: is this command type actually read/used/relevant?
 
                 ctx.raw_data_walker = $crate::ipc::DataWalker::new(ctx.ctx.out_params.data_offset);
                 $( $crate::ipc::server::CommandParameter::<_>::after_response_write(&$out_param_name, &mut ctx)?; )*
@@ -87,7 +87,7 @@ macro_rules! ipc_cmif_tipc_interface_define_command {
                 $( $crate::ipc::server::CommandParameter::<_>::before_response_write(&$out_param_name, &mut ctx)?; )*
                 ctx.ctx.out_params.data_size = ctx.raw_data_walker.get_offset() as u32;
 
-                $crate::ipc::cmif::server::write_request_command_response_on_ipc_buffer(&mut ctx.ctx, $crate::result::ResultSuccess::make(), $crate::ipc::cmif::CommandType::Request);
+                $crate::ipc::cmif::server::write_request_command_response_on_msg_buffer(&mut ctx.ctx, $crate::result::ResultSuccess::make(), $crate::ipc::cmif::CommandType::Request);
 
                 ctx.raw_data_walker = $crate::ipc::DataWalker::new(ctx.ctx.out_params.data_offset);
                 $( $crate::ipc::server::CommandParameter::<_>::after_response_write(&$out_param_name, &mut ctx)?; )*
@@ -107,7 +107,7 @@ macro_rules! ipc_cmif_tipc_interface_define_command {
                 $( $crate::ipc::server::CommandParameter::<_>::before_response_write(&$out_param_name, &mut ctx)?; )*
                 ctx.ctx.out_params.data_size = ctx.raw_data_walker.get_offset() as u32;
 
-                $crate::ipc::tipc::server::write_request_command_response_on_ipc_buffer(&mut ctx.ctx, $crate::result::ResultSuccess::make(), 16); // TODO: is this command type actually read/used/relevant?
+                $crate::ipc::tipc::server::write_request_command_response_on_msg_buffer(&mut ctx.ctx, $crate::result::ResultSuccess::make(), 16); // TODO: is this command type actually read/used/relevant?
 
                 ctx.raw_data_walker = $crate::ipc::DataWalker::new(ctx.ctx.out_params.data_offset);
                 $( $crate::ipc::server::CommandParameter::<_>::after_response_write(&$out_param_name, &mut ctx)?; )*
@@ -136,7 +136,7 @@ macro_rules! ipc_control_interface_define_command {
                 $( $crate::ipc::server::CommandParameter::<_>::before_response_write(&$out_param_name, &mut ctx)?; )*
                 ctx.ctx.out_params.data_size = ctx.raw_data_walker.get_offset() as u32;
 
-                $crate::ipc::cmif::server::write_control_command_response_on_ipc_buffer(&mut ctx.ctx, $crate::result::ResultSuccess::make(), $crate::ipc::cmif::CommandType::Control);
+                $crate::ipc::cmif::server::write_control_command_response_on_msg_buffer(&mut ctx.ctx, $crate::result::ResultSuccess::make(), $crate::ipc::cmif::CommandType::Control);
 
                 ctx.raw_data_walker = $crate::ipc::DataWalker::new(ctx.ctx.out_params.data_offset);
                 $( $crate::ipc::server::CommandParameter::<_>::after_response_write(&$out_param_name, &mut ctx)?; )*
@@ -627,8 +627,8 @@ impl DataWalker {
 }
 
 #[inline(always)]
-pub fn get_ipc_buffer() -> *mut u8 {
-    get_current_thread().get().get_tlr_ptr()
+pub fn get_msg_buffer() -> *mut u8 {
+    get_current_thread().get().get_thread_local_region().msg_buffer.as_mut_ptr()
 }
 
 #[inline(always)]
@@ -804,14 +804,15 @@ pub struct CommandContext {
     receive_buffers: ArrayVec<[BufferDescriptor; MAX_COUNT]>,
     exchange_buffers: ArrayVec<[BufferDescriptor; MAX_COUNT]>,
     pointer_buffer: *mut u8,
-    pointer_buffer_offset: usize,
+    in_pointer_buffer_offset: usize,
+    out_pointer_buffer_offset: usize,
     pointer_size_walker: DataWalker,
     pointer_size_walker_initialized: bool
 }
 
 impl CommandContext {
     pub fn empty() -> Self {
-        Self { object_info: ObjectInfo::new(), in_params: CommandIn::empty(), out_params: CommandOut::empty(), send_statics: ArrayVec::new(), receive_statics: ArrayVec::new(), send_buffers: ArrayVec::new(), receive_buffers: ArrayVec::new(), exchange_buffers: ArrayVec::new(), pointer_buffer: core::ptr::null_mut(), pointer_buffer_offset: 0, pointer_size_walker: DataWalker::empty(), pointer_size_walker_initialized: false }
+        Self { object_info: ObjectInfo::new(), in_params: CommandIn::empty(), out_params: CommandOut::empty(), send_statics: ArrayVec::new(), receive_statics: ArrayVec::new(), send_buffers: ArrayVec::new(), receive_buffers: ArrayVec::new(), exchange_buffers: ArrayVec::new(), pointer_buffer: core::ptr::null_mut(), in_pointer_buffer_offset: 0, out_pointer_buffer_offset: 0, pointer_size_walker: DataWalker::empty(), pointer_size_walker_initialized: false }
     }
 
     pub fn new_client(object_info: ObjectInfo) -> Self {
@@ -889,11 +890,11 @@ impl CommandContext {
             let pointer_buf_size = self.pointer_buffer as usize;
             let mut buffer_in_static = false;
             if pointer_buf_size > 0 {
-                let left_size = pointer_buf_size - self.pointer_buffer_offset;
+                let left_size = pointer_buf_size - self.in_pointer_buffer_offset;
                 buffer_in_static = buffer.size <= left_size;
             }
             if buffer_in_static {
-                self.pointer_buffer_offset += buffer.size;
+                self.in_pointer_buffer_offset += buffer.size;
             }
             
             if is_in {
@@ -1035,9 +1036,9 @@ impl CommandContext {
                         self.pointer_size_walker.advance_get::<u16>() as usize
                     }
                 };
-                self.pointer_buffer_offset = align_down(self.pointer_buffer_offset - buf_size, 0x10);
-                let buf = unsafe { self.pointer_buffer.offset(self.pointer_buffer_offset as isize) };
-                self.add_send_static(SendStaticDescriptor::new(buf as *const u8, buf_size, self.send_statics.len() as u32))?;
+
+                let buf = unsafe { self.pointer_buffer.offset(self.out_pointer_buffer_offset as isize) };
+                self.out_pointer_buffer_offset += buf_size;
                 return Ok(sf::Buffer::from_mut(buf, buf_size));
             }
         }
