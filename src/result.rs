@@ -153,6 +153,25 @@ result_define!(Success: 0, 0);
 
 pub type Result<T> = result::Result<T, ResultCode>;
 
+pub trait ResultExt<T> {
+    fn ok_if(self, rc: ResultCode, def_t: T) -> Self;
+
+    fn ok_if_r<R: ResultBase>(self, def_t: T) -> Self where Self: Sized {
+        self.ok_if(R::make(), def_t)
+    }
+}
+
+impl<T: Copy> ResultExt<T> for Result<T> {
+    fn ok_if(self, rc: ResultCode, def_t: T) -> Self {
+        if self.is_err() && self.err().unwrap() == rc {
+            Ok(def_t)
+        }
+        else {
+            self
+        }
+    }
+}
+
 // Results
 
 pub const RESULT_MODULE: u32 = 503;

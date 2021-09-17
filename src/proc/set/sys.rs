@@ -27,10 +27,10 @@ fn current_fw_version(with_revision: bool) -> Result<FirmwareVersion> {
         },
         pad_2: 0,
         pad_3: 0,
-        platform: CString::from_str("PegasusSDK for PC")?,
+        platform: CString::from_str("PC")?,
         version_hash: CString::from_str("BABABABA")?,
         display_version: CString::from_str("5.1.0")?,
-        display_title: CString::from_str("PegasusSDK for PC 5.1.0")?,
+        display_title: CString::from_str("PegasusSDK Firmware for PC 5.1.0-69")?,
     })
 }
 

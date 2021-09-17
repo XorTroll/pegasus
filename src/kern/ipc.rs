@@ -768,12 +768,11 @@ impl KServerSession {
         server_msg.set_header(client_header);
 
         if client_header.get_has_special_header() {
-            // clientHeader.MoveHandlesCount == 0 here? (...)
+            // TODO: Ensure that clientHeader.MoveHandlesCount == 0 here? (...)
 
             server_msg.set_special_header(client_special_header);
 
             if client_special_header.get_send_process_id() {
-                // TODO
                 server_msg.set_process_id(client_process.get().id);
             }
 

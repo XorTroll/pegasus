@@ -254,10 +254,10 @@ pub struct HostFileSystem {
 }
 
 impl HostFileSystem {
-    pub fn new(base_dir: String) -> Self {
-        Self {
+    pub fn new(base_dir: String) -> Shared<Self> {
+        Shared::new(Self {
             base_dir: base_dir
-        }
+        })
     }
 
     fn make_path(&self, path: PathBuf) -> PathBuf {

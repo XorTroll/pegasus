@@ -2,8 +2,13 @@ use unicorn::{RegisterARM64, Engine, Handle};
 use unicorn::unicorn_const::{Arch, Mode, Permission};
 use std::boxed::Box;
 use std::ffi::c_void;
+use std::path::PathBuf;
+use crate::fs::{FileSystem, FileOpenMode, ReadOption};
+use crate::fs::result as fs_result;
 use crate::kern::proc::get_current_process;
-use crate::util;
+use crate::ldr::npdm::NpdmData;
+use crate::os::ThreadLocalRegion;
+use crate::util::{self, Shared};
 use crate::result::*;
 use crate::emu::kern as emu_kern;
 use crate::kern::thread::{self, get_current_thread, get_scheduler};
@@ -243,7 +248,7 @@ impl Context {
         }
     }
 
-    pub fn load_nso(&mut self, base_address: u64,  nso_data: Vec<u8>) -> Result<u64> {
+    pub fn load_nso(&mut self, base_address: u64, nso_data: Vec<u8>) -> Result<u64> {
         let nso_header: ldr::NsoHeader = util::slice_read_val(&nso_data, None)?;
         result_return_unless!(nso_header.magic == ldr::NsoHeader::MAGIC, ldr_result::ResultInvalidNso);
 
@@ -289,6 +294,55 @@ impl Context {
         Ok(text_start_addr)
     }
 
+    fn load_program_nso(&mut self, exefs: &Shared<dyn FileSystem>, nso_name: String, base_address: &mut u64) -> Result<u64> {
+        let nso_file = exefs.get().open_file(PathBuf::from(nso_name.clone()), FileOpenMode::Read())?;
+
+        let mut nso_data: Vec<u8> = vec![0; nso_file.get().get_size()?];
+        nso_file.get().read(0, &mut nso_data, ReadOption::None)?;
+
+        let addr = self.load_nso(*base_address, nso_data)?;
+        log_line!("Loaded '{}' at {:#X}!", nso_name, *base_address);
+        // TODO: this is quite a bad idea, memory regions might be bigger than this... I need to eventually implement memory support in kern
+        *base_address += 0x1000000;
+        Ok(addr)
+    }
+
+    pub fn load_program(&mut self, exefs: Shared<dyn FileSystem>, base_address: u64) -> Result<(u64, NpdmData)> {
+        let mut cur_base_addr = base_address;
+        let mut cur_start_addr: Option<u64> = None;
+
+        if let Ok(addr) = self.load_program_nso(&exefs, String::from("rtld"), &mut cur_base_addr) {
+            cur_start_addr = Some(addr);
+        }
+
+        if let Ok(addr) = self.load_program_nso(&exefs, String::from("main"), &mut cur_base_addr) {
+            if cur_start_addr.is_none() {
+                cur_start_addr = Some(addr);
+            }
+        }
+
+        self.load_program_nso(&exefs, String::from("sdk"), &mut cur_base_addr).ok_if_r::<fs_result::ResultPathNotFound>(0)?;
+
+        // TODO: actual max value?
+        const MAX_SUBSDK_INDEX: u32 = 20;
+        for i in 0..MAX_SUBSDK_INDEX {
+            self.load_program_nso(&exefs, format!("subsdk{}", i), &mut cur_base_addr).ok_if_r::<fs_result::ResultPathNotFound>(0)?;
+        }
+
+        let npdm = {
+            let npdm_file = exefs.get().open_file(PathBuf::from("main.npdm"), FileOpenMode::Read())?;
+            let mut npdm_data: Vec<u8> = vec![0; npdm_file.get().get_size()?];
+            npdm_file.get().read(0, &mut npdm_data, ReadOption::None)?;
+
+            NpdmData::new(&npdm_data)?
+        };
+
+        match cur_start_addr {
+            Some(addr) => Ok((addr, npdm)),
+            None => fs_result::ResultInvalidNcaFileSystemType::make_err()
+        }
+    }
+
     pub fn create_execution_context(&self, stack_size: usize, entry_addr: u64) -> Result<ExecutionContext> {
         // TODO: set proper address
         let stack_address = self.regions.last().unwrap().end();
@@ -300,7 +354,7 @@ impl Context {
 
         // TODO: set proper address
         let tlr_address = stack.end();
-        let tlr_size = 0x200; // TODO: make const value
+        let tlr_size = std::mem::size_of::<ThreadLocalRegion>();
         let tlr_data = vec![0; tlr_size];
         let tlr = create_memory_region(tlr_data, tlr_address,
             false,
