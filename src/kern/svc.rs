@@ -1,3 +1,6 @@
+use core::mem;
+use core::panic;
+use std::time::Duration;
 use scopeguard::{guard, ScopeGuard};
 use crate::emu::cpu;
 use crate::kern::KAutoObject;
@@ -15,16 +18,10 @@ use crate::kern::wait_for_sync_objects;
 use crate::result::*;
 use crate::util::Shared;
 use crate::util;
-use core::mem;
-use core::panic;
-use std::time::Duration;
-
-use super::ipc::KLightSession;
 use super::ipc::KSession;
 use super::thread::get_current_thread;
 
 pub type Handle = u32;
-
 pub const INVALID_HANDLE: Handle = 0;
 pub const CURRENT_THREAD_PSEUDO_HANDLE: Handle = 0xFFFF8000;
 pub const CURRENT_PROCESS_PSEUDO_HANDLE: Handle = 0xFFFF8001;

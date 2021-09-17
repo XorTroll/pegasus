@@ -292,8 +292,7 @@ impl<const S: usize> CString<S> {
         unsafe {
             match core::str::from_utf8(core::slice::from_raw_parts(ptr, ptr_len)) {
                 Ok(name) => Ok(name.trim_matches('\0')),
-                // TODO
-                Err(_) => Err(ResultCode::new(0xBABA))
+                Err(_) => result::ResultInvalidUtf8String::make_err()
             }
         }
     }
@@ -434,8 +433,7 @@ impl<const S: usize> CString16<S> {
 pub fn slice_read_data(slice: &[u8], offset: Option<usize>, len: usize) -> Result<Vec<u8>> {
     let offset_val = offset.unwrap_or(0);
 
-    // TODO
-    result_return_unless!((offset_val + len) <= slice.len(), 0xBEEF);
+    result_return_unless!((offset_val + len) <= slice.len(), result::ResultReadOutOfBounds);
     
     Ok(slice[offset_val..offset_val + len].to_vec())
 }
@@ -443,8 +441,7 @@ pub fn slice_read_data(slice: &[u8], offset: Option<usize>, len: usize) -> Resul
 pub fn slice_read_val<T: Copy>(slice: &[u8], offset: Option<usize>) -> Result<T> {
     let offset_val = offset.unwrap_or(0);
 
-    // TODO
-    result_return_unless!((offset_val + core::mem::size_of::<T>()) <= slice.len(), 0xBEEF);
+    result_return_unless!((offset_val + core::mem::size_of::<T>()) <= slice.len(), result::ResultReadOutOfBounds);
     
     unsafe {
         let ptr = slice.as_ptr().offset(offset_val as isize) as *const T;
@@ -462,16 +459,6 @@ pub fn slice_read_data_advance(slice: &[u8], offset: &mut usize, len: usize) -> 
     let data = slice_read_data(slice, Some(*offset), len)?;
     *offset += len;
     Ok(data)
-}
-
-pub fn trailing_zero_count(val: u64) -> u64 {
-    for i in 0..64 {
-        if (val & bit!(i)) != 0 {
-            return i;
-        }
-    }
-
-    return 64;
 }
 
 pub struct Shared<T: ?Sized>(pub Arc<Mutex<T>>);

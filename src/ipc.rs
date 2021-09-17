@@ -6,7 +6,6 @@ use crate::kern::thread::get_current_thread;
 use crate::result::*;
 use crate::result as lib_result;
 use crate::kern::svc;
-use crate::util::align_up;
 
 #[macro_export]
 macro_rules! ipc_cmif_interface_define_command {

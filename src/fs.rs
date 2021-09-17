@@ -127,7 +127,7 @@ pub trait FileSystem {
     fn get_file_time_stamp_raw(&mut self, path: PathBuf) -> Result<TimeStampRaw>;
 }
 
-/// Host
+// Host
 
 fn convert_io_result<T>(r: IoResult<T>) -> Result<T> {
     r.map_err(|err| match err.kind() {
@@ -202,10 +202,9 @@ impl HostDirectory {
 
 impl Directory for HostDirectory {
     fn read(&mut self, count: usize) -> Result<Vec<DirectoryEntry>> {
-        result_return_unless!(count <= self.entries.len(), 0x9);
-
+        let actual_count = std::cmp::min(count, self.entries.len());
         let mut dir_entries: Vec<DirectoryEntry> = Vec::new();
-        for i in 0..count {
+        for i in 0..actual_count {
             let entry = &self.entries[i];
 
             let entry_path = entry.path().into_os_string().into_string().unwrap();
@@ -269,9 +268,8 @@ impl HostFileSystem {
 impl FileSystem for HostFileSystem {
     fn create_file(&mut self, path: PathBuf, size: usize, _create_option: CreateOption) -> Result<()> {
         // Note: no need for concatenation file support
-
         let abs_path = self.make_path(path);
-        result_return_if!(abs_path.exists(), 0x5);
+        result_return_if!(abs_path.exists(), result::ResultPathAlreadyExists);
 
         let file = convert_io_result(StdFile::open(abs_path))?;
         convert_io_result(file.set_len(size as u64))?;

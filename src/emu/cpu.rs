@@ -2,6 +2,7 @@ use unicorn::{RegisterARM64, Engine, Handle};
 use unicorn::unicorn_const::{Arch, Mode, Permission};
 use std::boxed::Box;
 use std::ffi::c_void;
+use crate::kern::proc::get_current_process;
 use crate::util;
 use crate::result::*;
 use crate::emu::kern as emu_kern;
@@ -119,7 +120,12 @@ fn unicorn_code_hook(uc_h: Handle, address: u64, _size: usize) {
     if svc_insn == cur_insn {
         if let Some(svc_id) = svc::SvcId::from(maybe_svc_id) {
             if let Some(svc_handler) = emu_kern::try_find_svc_handler(&svc_id) {
-                // TODO: check with NPDM flags allow calling the SVC (cur_process->npdm->kernel capabilities->enabled svcs)
+                let svc_enabled = get_current_process().get().npdm.aci0_kernel_capabilities.enabled_svcs.contains(&svc_id);
+                if !svc_enabled {
+                    // TODO: how is this handled in a real console?
+                    panic!("SVC not enabled for this process: {:?}", svc_id);
+                }
+                
                 (svc_handler)(ctx_h).unwrap();
             }
             else {

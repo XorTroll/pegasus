@@ -159,5 +159,7 @@ pub const RESULT_MODULE: u32 = 503;
 
 result_define_group!(RESULT_MODULE => {
     NotSupported: 1,
-    InvalidCast: 2
+    InvalidCast: 2,
+    ReadOutOfBounds: 3,
+    InvalidUtf8String: 4
 });

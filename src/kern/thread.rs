@@ -8,7 +8,7 @@ use rsevents::Awaitable;
 use rsevents::ManualResetEvent;
 use rsevents::State;
 use crate::emu::cpu;
-use crate::util::{Shared, RecursiveLock, new_recursive_lock, trailing_zero_count};
+use crate::util::{Shared, RecursiveLock, new_recursive_lock};
 use crate::result::*;
 use crate::os::ThreadLocalRegion;
 use super::{KAutoObject, KFutureSchedulerObject, get_time_manager};
@@ -686,7 +686,7 @@ impl KPriorityQueue {
 
         let mut ret_thread_list: Vec<Shared<KThread>> = Vec::new();
         loop {
-            let priority = trailing_zero_count(cur_priority_mask) as i32;
+            let priority = cur_priority_mask.trailing_zeros() as i32;
             if priority == PRIORITY_COUNT as i32 {
                 break;
             }
@@ -1020,7 +1020,7 @@ impl KScheduler {
     fn reschedule_other_cores(scheduled_cores_mask: u64) {
         let mut mask = scheduled_cores_mask;
         while mask != 0 {
-            let core_to_signal = trailing_zero_count(mask) as i32;
+            let core_to_signal = mask.trailing_zeros() as i32;
             let scheduler = get_scheduler(core_to_signal);
 
             if !scheduler.cur_thread.ptr_eq(&scheduler.idle_thread) {
