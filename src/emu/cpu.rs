@@ -311,16 +311,20 @@ impl Context {
         let mut cur_base_addr = base_address;
         let mut cur_start_addr: Option<u64> = None;
 
-        if let Ok(addr) = self.load_program_nso(&exefs, String::from("rtld"), &mut cur_base_addr) {
-            cur_start_addr = Some(addr);
+        // rtld may not be present
+        if let Ok(rtld_addr) = self.load_program_nso(&exefs, String::from("rtld"), &mut cur_base_addr) {
+            cur_start_addr = Some(rtld_addr);
         }
 
-        if let Ok(addr) = self.load_program_nso(&exefs, String::from("main"), &mut cur_base_addr) {
-            if cur_start_addr.is_none() {
-                cur_start_addr = Some(addr);
-            }
+        // main must be present
+        let main_addr = self.load_program_nso(&exefs, String::from("main"), &mut cur_base_addr)?;
+        if cur_start_addr.is_none() {
+            cur_start_addr = Some(main_addr);
         }
 
+        result_return_if!(cur_start_addr.is_none(), fs_result::ResultInvalidNcaFileSystemType);
+
+        // sdk/subsdks may not be present
         self.load_program_nso(&exefs, String::from("sdk"), &mut cur_base_addr).ok_if_r::<fs_result::ResultPathNotFound>(0)?;
 
         // TODO: actual max value?
@@ -329,6 +333,7 @@ impl Context {
             self.load_program_nso(&exefs, format!("subsdk{}", i), &mut cur_base_addr).ok_if_r::<fs_result::ResultPathNotFound>(0)?;
         }
 
+        // main.npdm must be present
         let npdm = {
             let npdm_file = exefs.get().open_file(PathBuf::from("main.npdm"), FileOpenMode::Read())?;
             let mut npdm_data: Vec<u8> = vec![0; npdm_file.get().get_size()?];
@@ -337,10 +342,7 @@ impl Context {
             NpdmData::new(&npdm_data)?
         };
 
-        match cur_start_addr {
-            Some(addr) => Ok((addr, npdm)),
-            None => fs_result::ResultInvalidNcaFileSystemType::make_err()
-        }
+        Ok((cur_start_addr.unwrap(), npdm))
     }
 
     pub fn create_execution_context(&self, stack_size: usize, entry_addr: u64) -> Result<ExecutionContext> {
