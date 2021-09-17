@@ -17,7 +17,6 @@
 #![allow(non_snake_case)]
 
 use backtrace::Backtrace;
-use std::path::PathBuf;
 use std::panic;
 use std::process;
 
@@ -36,13 +35,13 @@ pub mod ldr;
 pub mod emu;
 
 pub mod kern;
+use crate::kern::thread::try_get_current_thread;
 
 pub mod os;
 
 pub mod sm;
 
 pub mod fs;
-use fs::FileSystem;
 
 pub mod set;
 
@@ -63,8 +62,49 @@ fn main() {
         // Invoke the default panic handler
         orig_hook(panic_info);
 
-        // Print the backtrace, guarding everything to stop other threads from logging
-        println!("A panic happened in this thread:");
+        println!();
+
+        // Show information about the panicking thread/process, if possible
+        if let Some(thread) = try_get_current_thread() {
+            println!(" ---- Thread/process info ----");
+            println!();
+
+            if let Some(proc) = thread.get().owner_process.as_ref() {
+                println!("* Process name: '{}'", proc.get().npdm.meta.name.get_str().unwrap());
+                println!("* Process ID: {:#X}", proc.get().id);
+                println!("* Program ID: {:#018X}", proc.get().npdm.aci0.program_id);
+            }
+            else {
+                println!("* Not a process...");
+            }
+
+            println!("* Is emulated thread: {}", thread.get().is_emu_thread());
+            println!("* Host thread name: '{}'", thread.get().get_host_name());
+            // TODO: thread name from TLS
+            // TODO: module name from .rodata
+
+            // If the thread is from an actual external program, print some of its registers
+            if let Some(exec_ctx) = thread.get().cpu_exec_ctx.as_ref() {
+                let handle = exec_ctx.get_handle();
+                println!("* Registers:");
+                println!(" -- PC: {:#X}", handle.read_register::<u64>(emu::cpu::Register::PC).unwrap());
+                println!(" -- X0: {:#X}", handle.read_register::<u64>(emu::cpu::Register::X0).unwrap());
+                println!(" -- X1: {:#X}", handle.read_register::<u64>(emu::cpu::Register::X1).unwrap());
+                println!(" -- X2: {:#X}", handle.read_register::<u64>(emu::cpu::Register::X2).unwrap());
+                println!(" -- X3: {:#X}", handle.read_register::<u64>(emu::cpu::Register::X3).unwrap());
+                println!(" -- X4: {:#X}", handle.read_register::<u64>(emu::cpu::Register::X4).unwrap());
+                println!(" -- X5: {:#X}", handle.read_register::<u64>(emu::cpu::Register::X5).unwrap());
+                println!(" -- X6: {:#X}", handle.read_register::<u64>(emu::cpu::Register::X6).unwrap());
+                println!(" -- X7: {:#X}", handle.read_register::<u64>(emu::cpu::Register::X7).unwrap());
+            }
+
+            println!();
+        }
+
+        // Print the backtrace
+        println!(" ---- Emulator backtrace ----");
+        println!();
+
         println!("{:?}", backtrace);
 
         // Exit everything, panic = unrecoverable error

@@ -494,6 +494,10 @@ impl KThread {
             &mut *(self.get_tlr_ptr() as *mut ThreadLocalRegion)
         }
     }
+
+    pub fn get_host_name(&self) -> &str {
+        self.host_thread_handle.as_ref().unwrap().thread().name().unwrap()
+    }
 }
 
 #[thread_local]
