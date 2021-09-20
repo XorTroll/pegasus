@@ -94,7 +94,7 @@ pub struct Meta {
 }
 
 impl Meta {
-    pub const MAGIC: u32 = 0x4154454D; // "META"
+    pub const MAGIC: u32 = u32::from_le_bytes(*b"META");
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -114,7 +114,7 @@ pub struct Aci0 {
 }
 
 impl Aci0 {
-    pub const MAGIC: u32 = 0x30494341; // "ACI0"
+    pub const MAGIC: u32 = u32::from_le_bytes(*b"ACI0");
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -180,7 +180,7 @@ pub struct Acid {
 }
 
 impl Acid {
-    pub const MAGIC: u32 = 0x44494341; // "ACID"
+    pub const MAGIC: u32 = u32::from_le_bytes(*b"ACID");
 }
 
 bit_enum! {
@@ -223,7 +223,7 @@ bit_enum! {
         CreateOwnSaveData = bit!(35),
         MoveCacheStorage = bit!(36),
         Debug = bit!(62),
-        FullPermission = bit!(63)
+        FullPermission = u64::MAX
     }
 }
 

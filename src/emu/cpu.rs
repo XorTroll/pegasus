@@ -8,7 +8,7 @@ use crate::fs::result as fs_result;
 use crate::kern::proc::get_current_process;
 use crate::ldr::npdm::NpdmData;
 use crate::os::ThreadLocalRegion;
-use crate::util::{self, Shared};
+use crate::util::{self, Shared, slice_read_data_advance, slice_read_val_advance};
 use crate::result::*;
 use crate::emu::kern as emu_kern;
 use crate::kern::thread::{self, get_current_thread, get_scheduler};
@@ -58,8 +58,41 @@ impl MemoryRegion {
     }
 }
 
+pub struct ModuleMemory {
+    pub file_name: String,
+    pub regions: Vec<MemoryRegion>
+}
+
+impl ModuleMemory {
+    pub fn new(file_name: String, regions: Vec<MemoryRegion>) -> Self {
+        Self {
+            file_name: file_name,
+            regions: regions
+        }
+    }
+
+    pub fn get_name(&self) -> Option<String> {
+        for region in self.regions.iter() {
+            // Module name is stored at the start of .rodata (u32 unk_zero, u32 module_name_len, char module_name[module_name_len])
+            if region.perm == Permission::READ {
+                let mut offset = std::mem::size_of::<u32>();
+                if let Ok(module_name_len) = slice_read_val_advance::<u32>(&region.data, &mut offset) {
+                    if let Ok(module_name_data) = slice_read_data_advance(&region.data, &mut offset, module_name_len as usize) {
+                        if let Ok(module_name) = String::from_utf8(module_name_data) {
+                            return Some(module_name);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+}
+
 pub type UnicornHook = *mut c_void;
 pub type Register = RegisterARM64;
+pub type MemoryPermission = Permission;
 
 pub struct ContextHandle(pub Handle);
 
@@ -184,7 +217,7 @@ pub struct ExecutionContext {
 }
 
 impl ExecutionContext {
-    pub fn new(entry_addr: u64, base_regions: &Vec<MemoryRegion>, stack: MemoryRegion, tlr: MemoryRegion) -> Result<Self> {
+    pub fn new(entry_addr: u64, modules: &Vec<ModuleMemory>, stack: MemoryRegion, tlr: MemoryRegion) -> Result<Self> {
         let mut uc = result::convert_unicorn_error(Engine::new(Arch::ARM64, Mode::ARM))?; 
 
         let uc_code_hook = result::convert_unicorn_error(uc.add_code_hook(unicorn_code_hook, 1, 0))?;
@@ -192,10 +225,12 @@ impl ExecutionContext {
         // NOTE: great unicorn Rust bindings, can't even add an invalid-mem-read/write/fetch hook ;)
 
         let mut exec_end_addr = u64::MAX;
-        for region in base_regions {
-            map_memory_region(&mut uc.handle, region)?;
-            if region.contains(entry_addr) {
-                exec_end_addr = region.end();
+        for exec in modules {
+            for region in exec.regions.iter() {
+                map_memory_region(&mut uc.handle, region)?;
+                if region.contains(entry_addr) {
+                    exec_end_addr = region.end();
+                }
             }
         }
         result_return_if!(exec_end_addr == u64::MAX, 0xBA);
@@ -238,17 +273,17 @@ impl ExecutionContext {
 }
 
 pub struct Context {
-    pub regions: Vec<MemoryRegion>
+    pub modules: Vec<ModuleMemory>
 }
 
 impl Context {
     pub const fn new() -> Self {
         Self {
-            regions: Vec::new()
+            modules: Vec::new()
         }
     }
 
-    pub fn load_nso(&mut self, base_address: u64, nso_data: Vec<u8>) -> Result<u64> {
+    pub fn load_nso(&mut self, file_name: String, base_address: u64, nso_data: Vec<u8>) -> Result<u64> {
         let nso_header: ldr::NsoHeader = util::slice_read_val(&nso_data, None)?;
         result_return_unless!(nso_header.magic == ldr::NsoHeader::MAGIC, ldr_result::ResultInvalidNso);
 
@@ -287,10 +322,8 @@ impl Context {
             Permission::READ | Permission::WRITE)?;
         
         let text_start_addr = text.start();
-        self.regions.push(text);
-        self.regions.push(rodata);
-        self.regions.push(data);
-        self.regions.push(bss);
+
+        self.modules.push(ModuleMemory::new(file_name, vec![text, rodata, data, bss]));
         Ok(text_start_addr)
     }
 
@@ -300,7 +333,7 @@ impl Context {
         let mut nso_data: Vec<u8> = vec![0; nso_file.get().get_size()?];
         nso_file.get().read(0, &mut nso_data, ReadOption::None)?;
 
-        let addr = self.load_nso(*base_address, nso_data)?;
+        let addr = self.load_nso(nso_name.clone(), *base_address, nso_data)?;
         log_line!("Loaded '{}' at {:#X}!", nso_name, *base_address);
         // TODO: this is quite a bad idea, memory regions might be bigger than this... I need to eventually implement memory support in kern
         *base_address += 0x1000000;
@@ -347,7 +380,7 @@ impl Context {
 
     pub fn create_execution_context(&self, stack_size: usize, entry_addr: u64) -> Result<ExecutionContext> {
         // TODO: set proper address
-        let stack_address = self.regions.last().unwrap().end();
+        let stack_address = self.modules.last().as_ref().unwrap().regions.last().unwrap().end();
         let stack_data = vec![0; stack_size];
         let stack = create_memory_region(stack_data, stack_address,
             false,
@@ -363,7 +396,7 @@ impl Context {
             tlr_size,
             Permission::READ | Permission::WRITE)?;
 
-        ExecutionContext::new(entry_addr, &self.regions, stack, tlr)
+        ExecutionContext::new(entry_addr, &self.modules, stack, tlr)
     }
 }
 

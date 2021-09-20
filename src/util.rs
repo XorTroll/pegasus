@@ -34,7 +34,7 @@ macro_rules! bit_enum {
         
             $(
                 pub const fn $entry_name() -> Self {
-                    Self($entry_value)
+                    Self($entry_value as $base)
                 }
             )*
         }

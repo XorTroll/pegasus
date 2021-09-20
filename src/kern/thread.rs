@@ -472,10 +472,12 @@ impl KThread {
         })
     }
 
+    #[inline]
     pub fn is_termination_requested(&self) -> bool {
         self.should_be_terminated || (self.state == ThreadState::Terminated)
     }
 
+    #[inline]
     pub fn is_emu_thread(&self) -> bool {
         self.cpu_exec_ctx.is_none()
     }
@@ -495,6 +497,7 @@ impl KThread {
         }
     }
 
+    #[inline]
     pub fn get_host_name(&self) -> &str {
         self.host_thread_handle.as_ref().unwrap().thread().name().unwrap()
     }

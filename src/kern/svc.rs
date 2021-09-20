@@ -208,6 +208,67 @@ impl BreakReason {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[repr(u32)]
+pub enum MemoryState {
+    #[default]
+    Free = 0x0,
+    Io = 0x1,
+    Static = 0x2,
+    Code = 0x3,
+    CodeData = 0x4,
+    Normal = 0x5,
+    Shared = 0x6,
+    Alias = 0x7,
+    AliasCode = 0x8,
+    AliasCodeData = 0x9,
+    Ipc = 0xA,
+    Stack = 0xB,
+    ThreadLocal = 0xC,
+    Transfered = 0xD,
+    SharedTransfered = 0xE,
+    SharedCode = 0xF,
+    Inaccessible = 0x10,
+    NonSecureIpc = 0x11,
+    NonDeviceIpc = 0x12,
+    Kernel = 0x13,
+    GeneratedCode = 0x14,
+    CodeOut = 0x15
+}
+
+bit_enum! {
+    MemoryPermission (u32) {
+        None = 0,
+        Read = bit!(0),
+        Write = bit!(1),
+        Execute = bit!(2),
+        DontCare = bit!(28)
+    }
+}
+
+bit_enum! {
+    MemoryAttribute (u32) {
+        None = 0,
+        Borrowed = bit!(0),
+        IpcMapped = bit!(1),
+        DeviceMapped = bit!(2),
+        Uncached = bit!(3)
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[repr(C)]
+pub struct MemoryInfo {
+    pub base_address: usize,
+    pub size: usize,
+    pub state: MemoryState,
+    pub attribute: MemoryAttribute,
+    pub permission: MemoryPermission,
+    pub ipc_refcount: u32,
+    pub device_refcount: u32,
+    pub pad: u32,
+}
+
 // Normal processes reschedule themselves as an interrupt after an SVC call -- since this is necessary for any process/thread, we use this guard/macro so that emulated processes behave the same
 macro_rules! register_emu_proc_post_svc_guard {
     () => {

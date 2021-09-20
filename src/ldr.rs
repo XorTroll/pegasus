@@ -54,5 +54,5 @@ pub struct NsoHeader {
 }
 
 impl NsoHeader {
-    pub const MAGIC: u32 = 0x304F534E; // "NSO0"
+    pub const MAGIC: u32 = u32::from_le_bytes(*b"NSO0");
 }

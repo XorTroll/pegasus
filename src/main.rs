@@ -36,6 +36,8 @@ pub mod emu;
 
 pub mod kern;
 use crate::kern::thread::try_get_current_thread;
+use crate::util::slice_read_data_advance;
+use crate::util::slice_read_val_advance;
 
 pub mod os;
 
@@ -54,6 +56,7 @@ fn main() {
     panic::set_hook(Box::new(move |panic_info| {
         // Generate backtrace
         // TODO: backtrace without panic calls, just everything before the panic?
+        // TODO: actual code backtrace for external programs?
         let backtrace = Backtrace::new();
 
         // Guard to prevent other thread logs to mix with the panic printing
@@ -73,15 +76,26 @@ fn main() {
                 println!("* Process name: '{}'", proc.get().npdm.meta.name.get_str().unwrap());
                 println!("* Process ID: {:#X}", proc.get().id);
                 println!("* Program ID: {:#018X}", proc.get().npdm.aci0.program_id);
+
+                if let Some(ctx) = proc.get().cpu_ctx.as_ref() {
+                    println!("* Modules:");
+                    for module in ctx.modules.iter() {
+                        let mod_name = match module.get_name() {
+                            Some(name) => name,
+                            None => String::from("<unk>")
+                        };
+
+                        println!(" -- {} (file: {})", mod_name, module.file_name);
+                    }
+                }
             }
             else {
                 println!("* Not a process...");
             }
 
-            println!("* Is emulated thread: {}", thread.get().is_emu_thread());
-            println!("* Host thread name: '{}'", thread.get().get_host_name());
             // TODO: thread name from TLS
-            // TODO: module name from .rodata
+            println!("* Host thread name: '{}'", thread.get().get_host_name());
+            println!("* Is emulated thread: {}", thread.get().is_emu_thread());
 
             // If the thread is from an actual external program, print some of its registers
             if let Some(exec_ctx) = thread.get().cpu_exec_ctx.as_ref() {

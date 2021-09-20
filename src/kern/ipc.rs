@@ -658,14 +658,8 @@ impl KServerSession {
         let server_msg = Message::new(&server_thread, custom_cmd_buf);
 
         let server_header = server_msg.get_header();
-        let server_special_header = server_msg.get_special_header();
-        let client_header = client_msg.get_header();
-        let client_special_header = client_msg.get_special_header();
 
         // TODO: check bounds in receive count, etc.
-
-        let server_msg_size = server_msg.get_size();
-        let client_msg_size = client_msg.get_size();
 
         client_msg.clear();
 
@@ -679,6 +673,7 @@ impl KServerSession {
         if server_header.get_has_special_header() {
             // clientHeader.MoveHandlesCount == 0 here? (...)
 
+            let server_special_header = server_msg.get_special_header();
             client_msg.set_special_header(server_special_header);
 
             if server_special_header.get_send_process_id() {
@@ -702,7 +697,7 @@ impl KServerSession {
 
         // Send statics
         let send_statics = server_msg.get_send_statics();
-        for send_static in &send_statics {
+        for _ in &send_statics {
             todo!("Send static support");
         }
 
@@ -748,15 +743,9 @@ impl KServerSession {
         let client_msg = Message::from_request(&request);
         let server_msg = Message::new(&server_thread, custom_cmd_buf);
 
-        let server_header = server_msg.get_header();
-        let server_special_header = server_msg.get_special_header();
         let client_header = client_msg.get_header();
-        let client_special_header = client_msg.get_special_header();
 
         // TODO: check bounds in receive count, etc.
-
-        let server_msg_size = server_msg.get_size();
-        let client_msg_size = client_msg.get_size();
 
         server_msg.clear();
 
@@ -770,6 +759,7 @@ impl KServerSession {
         if client_header.get_has_special_header() {
             // TODO: Ensure that clientHeader.MoveHandlesCount == 0 here? (...)
 
+            let client_special_header = client_msg.get_special_header();
             server_msg.set_special_header(client_special_header);
 
             if client_special_header.get_send_process_id() {
@@ -793,7 +783,7 @@ impl KServerSession {
 
         // Send statics
         let send_statics = client_msg.get_send_statics();
-        for send_static in &send_statics {
+        for _ in &send_statics {
             todo!("Send static support");
         }
 
