@@ -1,3 +1,4 @@
+use std::env::current_dir;
 use std::fmt;
 use std::marker::Unsize;
 use std::num::NonZeroUsize;
@@ -5,11 +6,14 @@ use std::ops::CoerceUnsized;
 use std::ptr;
 use std::any::Any;
 use std::sync::Arc;
+use std::io::{ErrorKind, Result as IoResult};
+use serde_json::Result as SerdeJsonResult;
 use std::thread;
 use parking_lot::lock_api::{GetThreadId, RawReentrantMutex, RawMutex as RawMutexTrait};
 use parking_lot::{RawMutex, Mutex, MutexGuard};
 use crate::kern::proc::{get_current_process, has_current_process};
 use crate::kern::thread::has_current_thread;
+use crate::fs::result as fs_result;
 use crate::result;
 use crate::result::*;
 
@@ -459,6 +463,26 @@ pub fn slice_read_data_advance(slice: &[u8], offset: &mut usize, len: usize) -> 
     let data = slice_read_data(slice, Some(*offset), len)?;
     *offset += len;
     Ok(data)
+}
+
+#[inline]
+pub fn get_path_relative_to_cwd(name: &str) -> String {
+    current_dir().unwrap().join(name).as_path().display().to_string()
+}
+
+pub fn convert_io_result<T>(r: IoResult<T>) -> Result<T> {
+    r.map_err(|err| match err.kind() {
+        // TODO: finish
+        ErrorKind::NotFound => fs_result::ResultPathNotFound::make(),
+        ErrorKind::PermissionDenied => fs_result::ResultTargetLocked::make(),
+        ErrorKind::WouldBlock => fs_result::ResultTargetLocked::make(),
+        ErrorKind::UnexpectedEof => fs_result::ResultOutOfRange::make(),
+        _ => result::ResultNotSupported::make()
+    })
+}
+
+pub fn convert_serde_json_result<T>(r: SerdeJsonResult<T>) -> Result<T> {
+    r.map_err(|err| result::ResultInvalidJson::make())
 }
 
 pub struct Shared<T: ?Sized>(pub Arc<Mutex<T>>);

@@ -11,7 +11,7 @@ use crate::os::ThreadLocalRegion;
 use crate::util::{self, Shared, slice_read_data_advance, slice_read_val_advance};
 use crate::result::*;
 use crate::emu::kern as emu_kern;
-use crate::kern::thread::{self, get_current_thread, get_scheduler};
+use crate::kern::thread::{get_current_thread, get_scheduler};
 use crate::kern::svc;
 use crate::ldr;
 use crate::ldr::result as ldr_result;
@@ -202,6 +202,7 @@ fn create_memory_region(segment_file_data: Vec<u8>, address: u64, is_compressed:
     Ok(MemoryRegion::from(address, segment_data, perm))
 }
 
+#[inline]
 fn map_memory_region(uc_h: &mut Handle, region: &MemoryRegion) -> Result<()> {
     result::convert_unicorn_error(uc_h.mem_map_ptr(region.address, region.len(), region.perm, region.data.as_ptr() as *mut c_void))
 }
@@ -225,15 +226,15 @@ impl ExecutionContext {
         // NOTE: great unicorn Rust bindings, can't even add an invalid-mem-read/write/fetch hook ;)
 
         let mut exec_end_addr = u64::MAX;
-        for exec in modules {
-            for region in exec.regions.iter() {
+        for module in modules {
+            for region in module.regions.iter() {
                 map_memory_region(&mut uc.handle, region)?;
                 if region.contains(entry_addr) {
                     exec_end_addr = region.end();
                 }
             }
         }
-        result_return_if!(exec_end_addr == u64::MAX, 0xBA);
+        result_return_if!(exec_end_addr == u64::MAX, result::ResultInvalidExecutionAddress);
 
         map_memory_region(&mut uc.handle, &stack)?;
         map_memory_region(&mut uc.handle, &tlr)?;

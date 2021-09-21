@@ -7,6 +7,8 @@ pub const RESULT_MODULE: u32 = 505;
 pub const UNICORN_ERROR_BASE: u32 = 1000;
 
 result_define_group!(RESULT_MODULE => {
+    InvalidExecutionAddress: 1,
+
     UnicornOutOfMemory: UNICORN_ERROR_BASE + 1,
     UnicornUnsupportedArch: UNICORN_ERROR_BASE + 2,
     UnicornInvalidHandle: UNICORN_ERROR_BASE + 3,

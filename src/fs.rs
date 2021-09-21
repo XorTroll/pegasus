@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::fs::{self, DirEntry, File as StdFile, OpenOptions};
-use std::io::{ErrorKind, Read, Result as IoResult, Seek, SeekFrom, Write};
+use std::io::{Read, Result as IoResult, Seek, SeekFrom, Write};
 use crate::util;
-use crate::util::Shared;
+use crate::util::{Shared, convert_io_result};
 use crate::result::*;
 
 pub mod result;
@@ -128,17 +128,6 @@ pub trait FileSystem {
 }
 
 // Host
-
-fn convert_io_result<T>(r: IoResult<T>) -> Result<T> {
-    r.map_err(|err| match err.kind() {
-        // TODO: finish
-        ErrorKind::NotFound => result::ResultPathNotFound::make(),
-        ErrorKind::PermissionDenied => result::ResultTargetLocked::make(),
-        ErrorKind::WouldBlock => result::ResultTargetLocked::make(),
-        ErrorKind::UnexpectedEof => result::ResultOutOfRange::make(),
-        _ => result::ResultNotImplemented::make()
-    })
-}
 
 pub struct HostFile {
     inner_file: StdFile

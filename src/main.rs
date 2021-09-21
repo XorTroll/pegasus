@@ -36,8 +36,6 @@ pub mod emu;
 
 pub mod kern;
 use crate::kern::thread::try_get_current_thread;
-use crate::util::slice_read_data_advance;
-use crate::util::slice_read_val_advance;
 
 pub mod os;
 
@@ -128,6 +126,7 @@ fn main() {
 
     kern::initialize().unwrap();
     proc::initialize().unwrap();
+    emu::cfg::initialize().unwrap();
 
     let mut cpu_ctx = emu::cpu::Context::new();
 

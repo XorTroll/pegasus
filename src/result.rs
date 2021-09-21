@@ -180,5 +180,6 @@ result_define_group!(RESULT_MODULE => {
     NotSupported: 1,
     InvalidCast: 2,
     ReadOutOfBounds: 3,
-    InvalidUtf8String: 4
+    InvalidUtf8String: 4,
+    InvalidJson: 5
 });
