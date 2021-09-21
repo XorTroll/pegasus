@@ -127,7 +127,6 @@ fn main() {
     }));
 
     emu::cfg::initialize().unwrap();
-    kern::initialize().unwrap();
     ncm::initialize().unwrap();
 
     {
@@ -147,6 +146,7 @@ fn main() {
         log_line!("Read fw ver: {:?}", fw_ver);
     }
 
+    kern::initialize().unwrap();
     proc::initialize().unwrap();
 
     let mut cpu_ctx = emu::cpu::Context::new();

@@ -309,7 +309,7 @@ struct Message {
 impl Message {
     pub fn new(thread: &Shared<KThread>, custom_cmd_buf: Option<(u64, usize)>) -> Self {
         let (buf, size) = match custom_cmd_buf {
-            Some((custom_addr, custom_size)) => {
+            Some((_custom_addr, _custom_size)) => {
                 // TODO: get actual ptr through unicorn?
                 // (custom_addr as *mut u8, custom_size)
                 todo!("Custom UserBuffer IPC requests")
@@ -637,21 +637,20 @@ impl KServerSession {
         let server_thread = get_current_thread();
         let server_process = get_current_process();
 
-        let (request, client_thread, client_process) = {
+        let (request, client_process) = {
             let _guard = make_critical_section_guard();
 
             result_return_unless!(server_session.get().active_request.is_some(), result::ResultInvalidState);
 
             let request = server_session.get().active_request.take().unwrap();
-            let client_thread = request.client_thread.clone();
-            let client_process = client_thread.get().owner_process.as_ref().unwrap().clone();
+            let client_process = request.client_thread.get().owner_process.as_ref().unwrap().clone();
 
             let has_any_requests = !server_session.get().requests.is_empty();
             if has_any_requests {
                 KSynchronizationObject::signal(server_session);
             }
 
-            (request, client_thread, client_process)
+            (request, client_process)
         };
 
         let client_msg = Message::from_request(&request);

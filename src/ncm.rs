@@ -45,7 +45,7 @@ fn scan_registered_storage_contents(storage_id: StorageId, registered_path: Path
                 cnt_type: nca.header.cnt_type
             };
 
-            log_line!("{:?} Scanned content {:#018X} of type {:?}", storage_id, cnt_entry.program_id, cnt_entry.cnt_type);
+            log_line!("[{:?}] Scanned content {:#018X} of type {:?}", storage_id, cnt_entry.program_id, cnt_entry.cnt_type);
 
             cnts.push(cnt_entry);
         }

@@ -315,7 +315,7 @@ impl KTimeManager {
         KThread::start_host(&mut self.work_thread, Self::work_thread_fn)
     }
 
-    pub fn schedule_future_invocation(&mut self, obj: Shared<dyn KFutureSchedulerObject>, timeout: Duration) {
+    pub fn schedule_future_invocation(&mut self, _obj: Shared<dyn KFutureSchedulerObject>, _timeout: Duration) {
         todo!("schedule_future_invocation");
     }
 

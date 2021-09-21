@@ -482,7 +482,7 @@ pub fn convert_io_result<T>(r: IoResult<T>) -> Result<T> {
 }
 
 pub fn convert_serde_json_result<T>(r: SerdeJsonResult<T>) -> Result<T> {
-    r.map_err(|err| result::ResultInvalidJson::make())
+    r.map_err(|_| result::ResultInvalidJson::make())
 }
 
 pub struct Shared<T: ?Sized>(pub Arc<Mutex<T>>);

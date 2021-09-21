@@ -1,7 +1,6 @@
 use cntx::key::Keyset;
 use serde::{Serialize, Deserialize};
 use std::fs::{File, create_dir};
-use std::result::Result as StdResult;
 use crate::{result::*, util::{convert_io_result, convert_serde_json_result, get_path_relative_to_cwd}};
 
 const CONFIG_FILE: &str = "config.cfg";

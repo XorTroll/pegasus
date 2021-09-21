@@ -79,10 +79,4 @@ pub struct KMemoryBlockManager {
 
 }
 
-impl KMemoryBlockManager {
-    pub fn new(address_space_start: u64, address_space_end: u64, slab_manager: u8) {
-
-    }
-}
-
 // ---
