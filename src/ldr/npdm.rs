@@ -1,5 +1,6 @@
 use std::mem;
 use crate::kern::svc;
+use crate::ncm::ProgramId;
 use crate::util;
 use crate::result::*;
 
@@ -102,7 +103,7 @@ impl Meta {
 pub struct Aci0 {
     pub magic: u32,
     pub reserved_1: [u8; 0xC],
-    pub program_id: u64,
+    pub program_id: ProgramId,
     pub reserved_2: [u8; 0x8],
     pub fs_access_control_offset: u32,
     pub fs_access_control_size: u32,
@@ -168,8 +169,8 @@ pub struct Acid {
     pub size: u32,
     pub reserved_1: [u8; 0x4],
     pub flags: AcidFlags,
-    pub program_id_min: u64,
-    pub program_id_max: u64,
+    pub program_id_min: ProgramId,
+    pub program_id_max: ProgramId,
     pub fs_access_control_offset: u32,
     pub fs_access_control_size: u32,
     pub service_access_control_offset: u32,

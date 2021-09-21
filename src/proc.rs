@@ -1,4 +1,4 @@
-use crate::{ldr::npdm::{self, MetaFlags, MiscFlags, MiscParams, ThreadInfo}, util};
+use crate::{ldr::npdm::{self, MetaFlags, MiscFlags, MiscParams, ThreadInfo}, ncm::ProgramId, util};
 use crate::kern::svc;
 use crate::result::*;
 
@@ -10,7 +10,7 @@ pub struct EmulatedProcess {
 }
 
 impl EmulatedProcess {
-    pub fn make_npdm(name: &str, main_thread_priority: i32, main_thread_stack_size: usize, program_id: u64, enabled_svcs: Vec<svc::SvcId>, handle_table_size: usize) -> Result<npdm::NpdmData> {
+    pub fn make_npdm(name: &str, main_thread_priority: i32, main_thread_stack_size: usize, program_id: ProgramId, enabled_svcs: Vec<svc::SvcId>, handle_table_size: usize) -> Result<npdm::NpdmData> {
         Ok(npdm::NpdmData {
             meta: npdm::Meta {
                 magic: npdm::Meta::MAGIC,

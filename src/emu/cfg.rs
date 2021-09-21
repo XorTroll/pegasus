@@ -1,8 +1,12 @@
+use cntx::key::Keyset;
 use serde::{Serialize, Deserialize};
 use std::fs::{File, create_dir};
+use std::result::Result as StdResult;
 use crate::{result::*, util::{convert_io_result, convert_serde_json_result, get_path_relative_to_cwd}};
 
 const CONFIG_FILE: &str = "config.cfg";
+const KEYSET_FILE: &str = "prod.keys";
+// TODO: dev keyset support?
 
 const DEFAULT_NAND_SYSTEM_DIR: &str = "nand_system";
 const DEFAULT_NAND_USER_DIR: &str = "nand_user";
@@ -36,6 +40,7 @@ impl Default for Config {
 
 static mut G_CONFIG: Option<Config> = None;
 static mut G_CONFIG_PATH: String = String::new();
+static mut G_KEYSET: Option<Keyset> = None;
 
 pub fn get_config() -> &'static mut Config {
     unsafe {
@@ -60,6 +65,20 @@ fn set_config(cfg: Config, path: String) {
     }
 }
 
+pub fn get_keyset() -> Keyset {
+    unsafe {
+        assert!(G_KEYSET.is_some());
+
+        G_KEYSET.as_ref().unwrap().clone()
+    }
+}
+
+fn set_keyset(keyset: Keyset) {
+    unsafe {
+        G_KEYSET = Some(keyset);
+    }
+}
+
 pub fn load_config(path: String) -> Result<()> {
     let file = convert_io_result(File::open(path.clone()))?;
     let cfg: Config = convert_serde_json_result(serde_json::from_reader(file))?;
@@ -74,6 +93,7 @@ pub fn save_config() -> Result<()> {
 }
 
 pub fn initialize() -> Result<()> {
+    // Load config
     let config_path = get_path_relative_to_cwd(CONFIG_FILE);
     match load_config(config_path.clone()) {
         Err(_) => {
@@ -83,6 +103,12 @@ pub fn initialize() -> Result<()> {
         }
         _ => {}
     }
+
+    // Load keyset
+    let keyset_path = get_path_relative_to_cwd(KEYSET_FILE);
+    let keyset_file = convert_io_result(File::open(keyset_path))?;
+    let keyset = convert_io_result(Keyset::from(keyset_file))?;
+    set_keyset(keyset);
 
     Ok(())
 }

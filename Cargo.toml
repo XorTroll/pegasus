@@ -6,6 +6,7 @@ description = "Work-in-progress Nintendo Switch emulator, written in Rust and sl
 
 [dependencies]
 unicorn = { path = "unicorn-rs" }
+cntx = { git = "https://github.com/XorTroll/cntx" }
 paste = "1.0"
 lz4 = "1.23.2"
 rsevents = "0.2.1"

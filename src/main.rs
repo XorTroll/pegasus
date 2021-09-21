@@ -45,6 +45,8 @@ pub mod fs;
 
 pub mod set;
 
+pub mod ncm;
+
 pub mod proc;
 
 fn main() {
@@ -124,9 +126,28 @@ fn main() {
         process::exit(1);
     }));
 
-    kern::initialize().unwrap();
-    proc::initialize().unwrap();
     emu::cfg::initialize().unwrap();
+    kern::initialize().unwrap();
+    ncm::initialize().unwrap();
+
+    {
+        // Test
+
+        let mut system_version_nca = ncm::lookup_content(ncm::StorageId::BuiltinSystem, 0x0100000000000809, cntx::nca::ContentType::Data).unwrap();
+        let mut system_version_fs = system_version_nca.open_romfs_filesystem(0).unwrap();
+
+        let mut fw_ver: set::FirmwareVersion = unsafe {
+            core::mem::zeroed()
+        };
+        let fw_ver_buf = unsafe {
+            std::slice::from_raw_parts_mut(&mut fw_ver as *mut _ as *mut u8, std::mem::size_of::<set::FirmwareVersion>())
+        };
+        system_version_fs.read_file(String::from("file"), 0, fw_ver_buf).unwrap();
+
+        log_line!("Read fw ver: {:?}", fw_ver);
+    }
+
+    proc::initialize().unwrap();
 
     let mut cpu_ctx = emu::cpu::Context::new();
 
