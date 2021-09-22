@@ -89,7 +89,7 @@ impl<const A: BufferAttribute, const S: usize> Buffer<A, S> {
         unsafe {
             // First memset to zero so that it will be a valid nul-terminated string
             core::ptr::write_bytes(self.buf as *mut u8, 0, self.size);
-            core::ptr::copy(string.as_ptr(), self.buf as *mut u8, core::cmp::min(self.size - 1, string.len()));
+            core::ptr::copy(string.as_ptr(), self.buf as *mut u8, (self.size - 1).min(string.len()));
         }
     }
 }

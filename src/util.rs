@@ -276,7 +276,7 @@ impl<const S: usize> CString<S> {
         unsafe {
             ptr::write_bytes(ptr, 0, ptr_len);
             if !string.is_empty() {
-                ptr::copy(string.as_ptr(), ptr, core::cmp::min(ptr_len - 1, string.len()));
+                ptr::copy(string.as_ptr(), ptr, (ptr_len - 1).min(string.len()));
             }
         }
         Ok(())
@@ -286,7 +286,7 @@ impl<const S: usize> CString<S> {
         unsafe {
             ptr::write_bytes(ptr, 0, ptr_len);
             if !string.is_empty() {
-                ptr::copy(string.as_ptr(), ptr, core::cmp::min(ptr_len - 1, string.len()));
+                ptr::copy(string.as_ptr(), ptr, (ptr_len - 1).min(string.len()));
             }
         }
         Ok(())

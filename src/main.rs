@@ -35,7 +35,9 @@ pub mod ldr;
 pub mod emu;
 
 pub mod kern;
+use crate::fs::FileSystem;
 use crate::kern::thread::try_get_current_thread;
+use crate::util::Shared;
 
 pub mod os;
 
@@ -149,17 +151,34 @@ fn main() {
     kern::initialize().unwrap();
     proc::initialize().unwrap();
 
+    enum TestRunKind {
+        SystemTitle(ncm::ProgramId),
+        TestNso(String)
+    }
+
+    // let run_kind = TestRunKind::SystemTitle(0x0100000000001000);
+    let run_kind = TestRunKind::TestNso(String::from("nso_test/build/exefs"));
+
+    // Simplify running different kinds of programs while main is not properly finished (can't get to test IPC with system titles without implementing several SVCs)
+
+    let exefs: Shared<dyn FileSystem> = match run_kind {
+        TestRunKind::SystemTitle(program_id) => {
+            let mut system_title_nca = ncm::lookup_content(ncm::StorageId::BuiltinSystem, program_id, cntx::nca::ContentType::Program).unwrap();
+            fs::PartitionFileSystem::from_nca(&mut system_title_nca, 0).unwrap()
+        },
+        TestRunKind::TestNso(exefs_path) => {
+            fs::HostFileSystem::new(exefs_path)
+        }
+    };
+
     let mut cpu_ctx = emu::cpu::Context::new();
-
-    let mut qlaunch_nca = ncm::lookup_content(ncm::StorageId::BuiltinSystem, 0x0100000000001000, cntx::nca::ContentType::Program).unwrap();
-    let qlaunch_exefs = fs::PartitionFileSystem::from_nca(&mut qlaunch_nca, 0).unwrap();
-
-    let (start_addr, npdm) = cpu_ctx.load_program(qlaunch_exefs, 0x6900000).unwrap();
-    let main_thread_host_name = format!("ext.{}.MainThread", npdm.meta.name);
+    let (start_addr, npdm) = cpu_ctx.load_program(exefs, 0x6900000).unwrap();
+    let process_name = npdm.meta.name.get_string().unwrap();
+    let main_thread_host_name = format!("ext.{}.MainThread", process_name);
 
     let mut process = kern::proc::KProcess::new(Some(cpu_ctx), npdm).unwrap();
     let (mut main_thread, main_thread_handle) = kern::proc::KProcess::create_main_thread(&mut process, main_thread_host_name, start_addr).unwrap();
-    log_line!("Running main test program at {:#X}...", start_addr);
+    log_line!("Running process '{}' at {:#X}...", process_name, start_addr);
     kern::thread::KThread::start_exec(&mut main_thread, 0u64, main_thread_handle).unwrap();
 
     loop {

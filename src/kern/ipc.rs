@@ -245,6 +245,17 @@ impl KClientPort {
         let client_session = session.get().client_session.clone();
         Ok(client_session)
     }
+
+    pub fn disconnect(port: &mut Shared<KClientPort>) {
+        let _guard = make_critical_section_guard();
+
+        // Signal if max sessions reached
+        port.get().session_count -= 1;
+        let decremented_count = port.get().session_count;
+        if decremented_count == port.get().max_sessions {
+            KSynchronizationObject::signal(port);
+        }
+    }
 }
 
 impl Drop for KClientPort {
@@ -267,6 +278,10 @@ pub struct KSession {
 impl KAutoObject for KSession {
     fn get_refcount(&mut self) -> &mut AtomicI32 {
         &mut self.refcount
+    }
+
+    fn destroy(&mut self) {
+        self.client_session.get().disconnect_from_port();
     }
 }
 
@@ -863,6 +878,12 @@ impl KClientSession {
         }
 
         get_current_thread().get().sync_result.to(())
+    }
+
+    pub fn disconnect_from_port(&mut self) {
+        if let Some(port) = self.parent_port.as_mut() {
+            KClientPort::disconnect(port);
+        }
     }
 }
 

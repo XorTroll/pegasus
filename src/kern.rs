@@ -385,6 +385,7 @@ impl KResourceLimit {
         result_return_unless!(new_current_value <= self.limit_values[idx], result::ResultLimitReached);
 
         self.current_values[idx] += value;
+        self.peak_values[idx] = self.peak_values[idx].max(new_current_value);
         self.current_hints[idx] += value;
         Ok(())
     }
@@ -407,9 +408,10 @@ impl KResourceLimit {
 
     pub fn set_limit_value(&mut self, kind: LimitableResource, value: u64) -> Result<()> {
         let idx = kind as usize;
-        result_return_unless!(self.current_values[idx] <= self.limit_values[idx], result::ResultInvalidState);
+        result_return_unless!(self.current_values[idx] <= value, result::ResultInvalidState);
 
         self.limit_values[idx] = value;
+        self.peak_values[idx] = self.current_values[idx];
         Ok(())
     }
 }

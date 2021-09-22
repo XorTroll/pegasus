@@ -193,7 +193,7 @@ impl HostDirectory {
 
 impl Directory for HostDirectory {
     fn read(&mut self, count: usize) -> Result<Vec<DirectoryEntry>> {
-        let actual_count = std::cmp::min(count, self.entries.len());
+        let actual_count = count.min(self.entries.len());
         let mut dir_entries: Vec<DirectoryEntry> = Vec::with_capacity(actual_count);
 
         for i in 0..actual_count {
@@ -415,7 +415,7 @@ impl PartitionRootDirectory {
 
 impl Directory for PartitionRootDirectory {
     fn read(&mut self, count: usize) -> Result<Vec<DirectoryEntry>> {
-        let actual_count = std::cmp::min(count, self.file_info.len());
+        let actual_count = count.min(self.file_info.len());
         let mut dir_entries: Vec<DirectoryEntry> = Vec::with_capacity(actual_count);
 
         if self.mode.contains(DirectoryOpenMode::ReadFiles()) {

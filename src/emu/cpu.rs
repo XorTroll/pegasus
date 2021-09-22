@@ -209,8 +209,6 @@ fn map_memory_region(uc_h: &mut Handle, region: &MemoryRegion) -> Result<()> {
 
 pub struct ExecutionContext {
     uc: Engine,
-    uc_code_hook: UnicornHook,
-    uc_intr_hook: UnicornHook,
     pub exec_start_addr: u64,
     pub exec_end_addr: u64,
     pub stack: MemoryRegion,
@@ -221,8 +219,8 @@ impl ExecutionContext {
     pub fn new(entry_addr: u64, modules: &Vec<ModuleMemory>, stack: MemoryRegion, tlr: MemoryRegion) -> Result<Self> {
         let mut uc = result::convert_unicorn_error(Engine::new(Arch::ARM64, Mode::ARM))?; 
 
-        let uc_code_hook = result::convert_unicorn_error(uc.add_code_hook(unicorn_code_hook, 1, 0))?;
-        let uc_intr_hook = result::convert_unicorn_error(uc.add_intr_hook(unicorn_intr_hook, 1, 0))?;
+        result::convert_unicorn_error(uc.add_code_hook(unicorn_code_hook, 1, 0))?;
+        result::convert_unicorn_error(uc.add_intr_hook(unicorn_intr_hook, 1, 0))?;
         // NOTE: great unicorn Rust bindings, can't even add an invalid-mem-read/write/fetch hook ;)
 
         let mut exec_end_addr = u64::MAX;
@@ -244,8 +242,6 @@ impl ExecutionContext {
 
         let mut exec_ctx = Self {
             uc: uc,
-            uc_code_hook: uc_code_hook,
-            uc_intr_hook: uc_intr_hook,
             exec_start_addr: entry_addr,
             exec_end_addr: exec_end_addr,
             stack: stack,
