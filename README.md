@@ -36,7 +36,7 @@ Since this ain't a small project, some guidelines about how this project's sourc
 
 - Results for a certain module are placed in `<module>::result` and all follow a similar format, using a macro to define them.
 
-- Due to some questionable design thoughts on the official Rust boind
+- Due to some questionable design thoughts on the official Unicorn Rust bindings, this project makes use of a custom version (see [unicorn-rs](unicorn-rs))
 
 ## Credits
 
