@@ -72,15 +72,15 @@ impl ModuleMemory {
     }
 
     pub fn get_name(&self) -> Option<String> {
-        for region in self.regions.iter() {
-            // Module name is stored at the start of .rodata (u32 unk_zero, u32 module_name_len, char module_name[module_name_len])
-            if region.perm == Permission::READ {
-                let mut offset = std::mem::size_of::<u32>();
-                if let Ok(module_name_len) = slice_read_val_advance::<u32>(&region.data, &mut offset) {
-                    if let Ok(module_name_data) = slice_read_data_advance(&region.data, &mut offset, module_name_len as usize) {
-                        if let Ok(module_name) = String::from_utf8(module_name_data) {
-                            return Some(module_name);
-                        }
+        // Module name is stored at the start of .rodata (u32 unk_zero, u32 module_name_len, char module_name[module_name_len])
+        // Thus, find the first region with read-only perms
+        
+        if let Some(read_region) = self.regions.iter().find(|region| region.perm == Permission::READ) {
+            let mut offset = std::mem::size_of::<u32>();
+            if let Ok(module_name_len) = slice_read_val_advance::<u32>(&read_region.data, &mut offset) {
+                if let Ok(module_name_data) = slice_read_data_advance(&read_region.data, &mut offset, module_name_len as usize) {
+                    if let Ok(module_name) = String::from_utf8(module_name_data) {
+                        return Some(module_name);
                     }
                 }
             }

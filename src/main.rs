@@ -151,8 +151,10 @@ fn main() {
 
     let mut cpu_ctx = emu::cpu::Context::new();
 
-    let exefs = fs::HostFileSystem::new(String::from("flog.exe"));
-    let (start_addr, npdm) = cpu_ctx.load_program(exefs, 0x6900000).unwrap();
+    let mut qlaunch_nca = ncm::lookup_content(ncm::StorageId::BuiltinSystem, 0x0100000000001000, cntx::nca::ContentType::Program).unwrap();
+    let qlaunch_exefs = fs::PartitionFileSystem::from_nca(&mut qlaunch_nca, 0).unwrap();
+
+    let (start_addr, npdm) = cpu_ctx.load_program(qlaunch_exefs, 0x6900000).unwrap();
     let main_thread_host_name = format!("ext.{}.MainThread", npdm.meta.name);
 
     let mut process = kern::proc::KProcess::new(Some(cpu_ctx), npdm).unwrap();

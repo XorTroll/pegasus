@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::fs::{self, DirEntry, File as StdFile, OpenOptions};
 use std::io::{Read, Result as IoResult, Seek, SeekFrom, Write};
+use cntx::nca::NCA;
+use cntx::pfs0::PFS0;
 use crate::util;
 use crate::util::{Shared, convert_io_result};
 use crate::result::*;
@@ -192,7 +194,8 @@ impl HostDirectory {
 impl Directory for HostDirectory {
     fn read(&mut self, count: usize) -> Result<Vec<DirectoryEntry>> {
         let actual_count = std::cmp::min(count, self.entries.len());
-        let mut dir_entries: Vec<DirectoryEntry> = Vec::new();
+        let mut dir_entries: Vec<DirectoryEntry> = Vec::with_capacity(actual_count);
+
         for i in 0..actual_count {
             let entry = &self.entries[i];
 
@@ -353,3 +356,211 @@ impl FileSystem for HostFileSystem {
 }
 
 // ---
+
+// PFS0
+
+pub struct PartitionFile {
+    base_fs: Shared<PFS0>,
+    file_idx: usize
+}
+
+impl PartitionFile {
+    pub fn new(base_fs: Shared<PFS0>, file_idx: usize) -> Self {
+        Self {
+            base_fs: base_fs,
+            file_idx: file_idx
+        }
+    }
+}
+
+impl File for PartitionFile {
+    fn read(&mut self, offset: u64, data: &mut [u8], _option: ReadOption) -> Result<usize> {
+        convert_io_result(self.base_fs.get().read_file(self.file_idx, offset as usize, data))
+    }
+
+    fn write(&mut self, _offset: u64, _data: &[u8], _option: WriteOption) -> Result<usize> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn set_size(&mut self, _size: usize) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn get_size(&mut self) -> Result<usize> {
+        convert_io_result(self.base_fs.get().get_file_size(self.file_idx))
+    }
+
+    fn operate_range(&mut self, _op_id: OperationId, _offset: u64, _size: usize) -> Result<RangeInfo> {
+        todo!("OperateRange for PFS0 filesystem file");
+    }
+}
+
+pub struct PartitionRootDirectory {
+    file_info: Vec<(String, usize)>,
+    mode: DirectoryOpenMode
+}
+
+impl PartitionRootDirectory {
+    pub fn new(file_info: Vec<(String, usize)>, mode: DirectoryOpenMode) -> Self {
+        Self {
+            file_info: file_info,
+            mode: mode
+        }
+    }
+}
+
+impl Directory for PartitionRootDirectory {
+    fn read(&mut self, count: usize) -> Result<Vec<DirectoryEntry>> {
+        let actual_count = std::cmp::min(count, self.file_info.len());
+        let mut dir_entries: Vec<DirectoryEntry> = Vec::with_capacity(actual_count);
+
+        if self.mode.contains(DirectoryOpenMode::ReadFiles()) {
+            for i in 0..actual_count {
+                let (file_name, file_size) = &self.file_info[i];
+    
+                let dir_entry = DirectoryEntry {
+                    path: util::CString::from_string(file_name.clone())?,
+                    file_attr: FileAttribute::None(),
+                    pad_1: [0; 0x2],
+                    entry_type: DirectoryEntryType::File,
+                    pad_2: [0; 0x3],
+                    file_size: match self.mode.contains(DirectoryOpenMode::NoFileSize()) {
+                        true => 0,
+                        false => *file_size
+                    }
+                };
+    
+                dir_entries.push(dir_entry);
+            }
+        }
+
+        Ok(dir_entries)
+    }
+
+    fn get_entry_count(&mut self) -> Result<u64> {
+        Ok(self.file_info.len() as u64)
+    }
+}
+
+pub struct PartitionFileSystem {
+    base_fs: Shared<PFS0>,
+    files: Vec<String>
+}
+
+impl PartitionFileSystem {
+    pub fn new(base_fs: PFS0) -> Result<Shared<Self>> {
+        let files = convert_io_result(base_fs.list_files())?;
+
+        Ok(Shared::new(Self {
+            base_fs: Shared::new(base_fs),
+            files: files
+        }))
+    }
+
+    #[inline]
+    pub fn from_nca(nca: &mut NCA, fs_idx: usize) -> Result<Shared<Self>> {
+        let pfs0 = convert_io_result(nca.open_pfs0_filesystem(fs_idx))?;
+        Self::new(pfs0)
+    }
+}
+
+impl FileSystem for PartitionFileSystem {
+    fn create_file(&mut self, _path: PathBuf, _size: usize, _create_option: CreateOption) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn delete_file(&mut self, _path: PathBuf) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn create_directory(&mut self, _path: PathBuf) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn delete_directory(&mut self, _path: PathBuf) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn delete_directory_recursively(&mut self, _path: PathBuf) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn rename_file(&mut self, _old_path: PathBuf, _new_path: PathBuf) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn rename_directory(&mut self, _old_path: PathBuf, _new_path: PathBuf) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn get_entry_type(&mut self, path: PathBuf) -> Result<DirectoryEntryType> {
+        let path_str = path.as_path().display().to_string();
+
+        if path_str.is_empty() {
+            Ok(DirectoryEntryType::Directory)
+        }
+        else {
+            match self.files.contains(&path_str) {
+                true => Ok(DirectoryEntryType::File),
+                false => result::ResultPathNotFound::make_err()
+            }
+        }
+    }
+
+    fn open_file(&mut self, path: PathBuf, open_mode: FileOpenMode) -> Result<Shared<dyn File>> {
+        result_return_if!(open_mode != FileOpenMode::Read(), result::ResultWriteNotPermitted);
+
+        let path_str = path.as_path().display().to_string();
+
+        if let Some(file_idx) = self.files.iter().position(|file_name| file_name.eq(&path_str)) {
+            let file = Shared::new(PartitionFile::new(self.base_fs.clone(), file_idx));
+            Ok(file)
+        }
+        else {
+            result::ResultPathNotFound::make_err()
+        }
+    }
+
+    fn open_directory(&mut self, path: PathBuf, open_mode: DirectoryOpenMode) -> Result<Shared<dyn Directory>> {
+        // The only directory in a PFS0 is the root directory
+        let path_str = path.as_path().display().to_string();
+        result_return_unless!(path_str.is_empty(), result::ResultPathNotFound);
+
+        let mut file_info: Vec<(String, usize)> = Vec::new();
+        for i in 0..self.files.len() {
+            let file_name = self.files[i].clone();
+            let file_size = convert_io_result(self.base_fs.get().get_file_size(i))?;
+
+            file_info.push((file_name, file_size));
+        }
+
+        let root_dir = Shared::new(PartitionRootDirectory::new(file_info, open_mode));
+        Ok(root_dir)
+    }
+
+    fn commit(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+
+    fn get_free_space_size(&mut self, _path: PathBuf) -> Result<usize> {
+        Ok(0)
+    }
+
+    fn get_total_space_size(&mut self, _path: PathBuf) -> Result<usize> {
+        todo!("GetTotalSpaceSize for PFS0 filesystem");
+    }
+
+    fn clean_directory_recursively(&mut self, _path: PathBuf) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn get_file_time_stamp_raw(&mut self, _path: PathBuf) -> Result<TimeStampRaw> {
+        // PFS0 files don't contain timestamp info
+        result::ResultNotImplemented::make_err()
+    }
+}

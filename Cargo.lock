@@ -169,7 +169,7 @@ dependencies = [
 [[package]]
 name = "cntx"
 version = "0.1.0"
-source = "git+https://github.com/XorTroll/cntx#5b48514737b9370200378ca0b430aeac9c7d4471"
+source = "git+https://github.com/XorTroll/cntx#25e76ee0c37f4edc893ffab0e1d860242a31396b"
 dependencies = [
  "aes",
  "block-modes",
