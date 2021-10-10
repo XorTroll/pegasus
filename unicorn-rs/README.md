@@ -1,6 +1,6 @@
 # unicorn-rs
 
-> Note: copy of [Unicorn](../unicorn)'s Rust bindings, slightly improved for this project!
+> Note: Copy of [Unicorn's Rust bindings](https://github.com/unicorn-engine/unicorn/tree/master/bindings/rust), slightly improved for this project!
 
 Rust bindings for the [Unicorn](http://www.unicorn-engine.org/) emulator with utility functions.
 
