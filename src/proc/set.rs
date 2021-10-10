@@ -1,5 +1,6 @@
 use crate::ipc::server;
 use crate::kern::{proc::KProcess, thread::KThread};
+use crate::ncm::ProgramId;
 use crate::result::*;
 use super::EmulatedProcess;
 
@@ -8,7 +9,7 @@ use super::EmulatedProcess;
 pub mod sys;
 
 pub fn start_process() -> Result<()> {
-    let npdm = EmulatedProcess::make_npdm("settings", 27, 0x2000, 0x0100_0000_0000_1009, vec![
+    let npdm = EmulatedProcess::make_npdm("settings", 27, 0x2000, ProgramId(0x0100000000001009), vec![
         /* ... */
     ], 512)?;
 

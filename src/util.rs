@@ -1,5 +1,5 @@
 use std::env::current_dir;
-use std::fmt;
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::marker::Unsize;
 use std::num::NonZeroUsize;
 use std::ops::CoerceUnsized;
@@ -19,7 +19,7 @@ use crate::result::*;
 
 macro_rules! bit_enum {
     ($name:ident ($base:ty) { $( $entry_name:ident = $entry_value:expr ),* }) => {
-        #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+        #[derive(Copy, Clone, PartialEq, Eq, Default)]
         #[repr(C)]
         pub struct $name($base);
         
@@ -61,6 +61,14 @@ macro_rules! bit_enum {
             }
         }
 
+        impl const std::ops::Not for $name {
+            type Output = Self;
+
+            fn not(self) -> Self {
+                Self(!self.0)
+            }
+        }
+
         impl std::ops::BitOrAssign for $name {
             #[inline]
             fn bitor_assign(&mut self, other: Self) {
@@ -72,6 +80,27 @@ macro_rules! bit_enum {
             #[inline]
             fn bitand_assign(&mut self, other: Self) {
                 self.0 &= other.0
+            }
+        }
+
+        impl std::fmt::Debug for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let mut msg = String::new();
+                $(
+                    if self.contains(Self::$entry_name()) {
+                        if msg.is_empty() {
+                            msg = format!("{}", stringify!($entry_name));
+                        }
+                        else {
+                            msg = format!("{} + {}", msg, stringify!($entry_name));
+                        }
+                    }
+                )*
+
+                if !msg.is_empty() {
+                    msg = format!(" {} ", msg);
+                }
+                write!(f, "{} {{{}}}", stringify!($name), msg)
             }
         }
     };
@@ -216,8 +245,8 @@ pub struct CString<const S: usize> {
     pub c_str: [u8; S]
 }
 
-impl<const S: usize> fmt::Display for CString<S> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<const S: usize> Display for CString<S> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         let str_data = match self.get_str() {
             Ok(got_str) => got_str,
             Err(_) => ""
@@ -226,8 +255,8 @@ impl<const S: usize> fmt::Display for CString<S> {
     }
 }
 
-impl<const S: usize> fmt::Debug for CString<S> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<const S: usize> Debug for CString<S> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         let str_data = match self.get_str() {
             Ok(got_str) => got_str,
             Err(_) => ""
@@ -328,8 +357,8 @@ pub struct CString16<const S: usize> {
     pub c_str: [u16; S]
 }
 
-impl<const S: usize> fmt::Display for CString16<S> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<const S: usize> Display for CString16<S> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         let str_data = match self.get_string() {
             Ok(got_str) => got_str,
             Err(_) => String::new()
@@ -338,8 +367,8 @@ impl<const S: usize> fmt::Display for CString16<S> {
     }
 }
 
-impl<const S: usize> fmt::Debug for CString16<S> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<const S: usize> Debug for CString16<S> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         let str_data = match self.get_string() {
             Ok(got_str) => got_str,
             Err(_) => String::new()

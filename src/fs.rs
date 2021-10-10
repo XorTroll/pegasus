@@ -3,6 +3,7 @@ use std::fs::{self, DirEntry, File as StdFile, OpenOptions};
 use std::io::{Read, Result as IoResult, Seek, SeekFrom, Write};
 use cntx::nca::NCA;
 use cntx::pfs0::PFS0;
+use cntx::romfs::{RomFs, RomFsDirectoryIterator};
 use crate::util;
 use crate::util::{Shared, convert_io_result};
 use crate::result::*;
@@ -106,9 +107,23 @@ pub trait File {
     fn operate_range(&mut self, op_id: OperationId, offset: u64, size: usize) -> Result<RangeInfo>;
 }
 
+pub fn file_read_val<T>(file: &Shared<dyn File>, offset: u64, option: ReadOption) -> Result<T> {
+    let mut t: T = unsafe {
+        std::mem::zeroed()
+    };
+    let t_buf = unsafe {
+        std::slice::from_raw_parts_mut(&mut t as *mut _ as *mut u8, std::mem::size_of::<T>())
+    };
+
+    let size = file.get().read(offset, t_buf, option)?;
+    result_return_unless!(size == std::mem::size_of::<T>(), result::ResultOutOfRange);
+
+    Ok(t)
+}
+
 pub trait Directory {
     fn read(&mut self, count: usize) -> Result<Vec<DirectoryEntry>>;
-    fn get_entry_count(&mut self) -> Result<u64>;
+    fn get_entry_count(&mut self) -> Result<usize>;
 }
 
 pub trait FileSystem {
@@ -173,7 +188,7 @@ impl File for HostFile {
     }
 
     fn operate_range(&mut self, _op_id: OperationId, _offset: u64, _size: usize) -> Result<RangeInfo> {
-        todo!("OperateRange for host filesystem file");
+        todo!("OperateRange for HostFile");
     }
 }
 
@@ -236,8 +251,22 @@ impl Directory for HostDirectory {
         Ok(dir_entries)
     }
 
-    fn get_entry_count(&mut self) -> Result<u64> {
-        Ok(self.entries.len() as u64)
+    fn get_entry_count(&mut self) -> Result<usize> {
+        let mut dir_count = 0usize;
+        let mut file_count = 0usize;
+        for i in 0..self.entries.len() {
+            let entry = &self.entries[i];
+            let entry_metadata = convert_io_result(entry.metadata())?;
+
+            if entry_metadata.is_dir() && self.open_mode.contains(DirectoryOpenMode::ReadDirectories()) {
+                dir_count += 1;
+            }
+            else if !entry_metadata.is_dir() && self.open_mode.contains(DirectoryOpenMode::ReadFiles()) {
+                file_count += 1;
+            }
+        }
+
+        Ok(dir_count + file_count)
     }
 }
 
@@ -336,11 +365,11 @@ impl FileSystem for HostFileSystem {
 
 
     fn get_free_space_size(&mut self, _path: PathBuf) -> Result<usize> {
-        todo!("GetFreeSpaceSize for host filesystem");
+        todo!("GetFreeSpaceSize for HostFileSystem");
     }
 
     fn get_total_space_size(&mut self, _path: PathBuf) -> Result<usize> {
-        todo!("GetTotalSpaceSize for host filesystem");
+        todo!("GetTotalSpaceSize for HostFileSystem");
     }
 
     fn clean_directory_recursively(&mut self, path: PathBuf) -> Result<()> {
@@ -351,7 +380,7 @@ impl FileSystem for HostFileSystem {
     }
 
     fn get_file_time_stamp_raw(&mut self, _path: PathBuf) -> Result<TimeStampRaw> {
-        todo!("GetFileTimeStampRaw for host filesystem");
+        todo!("GetFileTimeStampRaw for HostFileSystem");
     }
 }
 
@@ -395,7 +424,7 @@ impl File for PartitionFile {
     }
 
     fn operate_range(&mut self, _op_id: OperationId, _offset: u64, _size: usize) -> Result<RangeInfo> {
-        todo!("OperateRange for PFS0 filesystem file");
+        todo!("OperateRange for PartitionFile");
     }
 }
 
@@ -428,10 +457,7 @@ impl Directory for PartitionRootDirectory {
                     pad_1: [0; 0x2],
                     entry_type: DirectoryEntryType::File,
                     pad_2: [0; 0x3],
-                    file_size: match self.mode.contains(DirectoryOpenMode::NoFileSize()) {
-                        true => 0,
-                        false => *file_size
-                    }
+                    file_size: if self.mode.contains(DirectoryOpenMode::NoFileSize()) { 0 } else { *file_size }
                 };
     
                 dir_entries.push(dir_entry);
@@ -441,8 +467,10 @@ impl Directory for PartitionRootDirectory {
         Ok(dir_entries)
     }
 
-    fn get_entry_count(&mut self) -> Result<u64> {
-        Ok(self.file_info.len() as u64)
+    fn get_entry_count(&mut self) -> Result<usize> {
+        let file_count = if self.mode.contains(DirectoryOpenMode::ReadFiles()) { self.file_info.len() } else { 0 };
+
+        Ok(file_count)
     }
 }
 
@@ -552,7 +580,7 @@ impl FileSystem for PartitionFileSystem {
     }
 
     fn get_total_space_size(&mut self, _path: PathBuf) -> Result<usize> {
-        todo!("GetTotalSpaceSize for PFS0 filesystem");
+        todo!("GetTotalSpaceSize PartitionFileSystem");
     }
 
     fn clean_directory_recursively(&mut self, _path: PathBuf) -> Result<()> {
@@ -564,3 +592,244 @@ impl FileSystem for PartitionFileSystem {
         result::ResultNotImplemented::make_err()
     }
 }
+
+// ---
+
+// RomFs
+
+pub struct RomFsFile {
+    base_fs: Shared<RomFs>,
+    file_offset: u64,
+    file_size: usize
+}
+
+impl RomFsFile {
+    pub fn new(base_fs: Shared<RomFs>, file_offset: u64, file_size: usize) -> Self {
+        Self {
+            base_fs,
+            file_offset,
+            file_size
+        }
+    }
+}
+
+impl File for RomFsFile {
+    fn read(&mut self, offset: u64, data: &mut [u8], _option: ReadOption) -> Result<usize> {
+        convert_io_result(self.base_fs.get().read_file_by_offset(self.file_offset, offset, data))
+    }
+
+    fn write(&mut self, _offset: u64, _data: &[u8], _option: WriteOption) -> Result<usize> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn set_size(&mut self, _size: usize) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn get_size(&mut self) -> Result<usize> {
+        Ok(self.file_size)
+    }
+
+    fn operate_range(&mut self, _op_id: OperationId, _offset: u64, _size: usize) -> Result<RangeInfo> {
+        todo!("OperateRange for RomFsFile");
+    }
+}
+
+pub struct RomFsDirectory {
+    dir_iter: RomFsDirectoryIterator,
+    mode: DirectoryOpenMode
+}
+
+impl RomFsDirectory {
+    pub fn new(dir_iter: RomFsDirectoryIterator, mode: DirectoryOpenMode) -> Self {
+        Self {
+            dir_iter,
+            mode
+        }
+    }
+}
+
+impl Directory for RomFsDirectory {
+    fn read(&mut self, count: usize) -> Result<Vec<DirectoryEntry>> {
+        let mut dir_entries: Vec<DirectoryEntry> = Vec::new();
+
+        loop {
+            if dir_entries.len() == count {
+                break;
+            }
+
+            let mut entry_added = false;
+            if self.mode.contains(DirectoryOpenMode::ReadDirectories()) {
+                if let Ok(dir_name) = self.dir_iter.next_dir() {
+                    let dir_entry = DirectoryEntry {
+                        path: util::CString::from_string(dir_name)?,
+                        file_attr: FileAttribute::None(),
+                        pad_1: [0; 0x2],
+                        entry_type: DirectoryEntryType::Directory,
+                        pad_2: [0; 0x3],
+                        file_size: 0
+                    };
+        
+                    dir_entries.push(dir_entry);
+                    entry_added = true;
+                }
+            }
+
+            if self.mode.contains(DirectoryOpenMode::ReadFiles()) {
+                if let Ok((file_name, file_size)) = self.dir_iter.next_file() {
+                    let dir_entry = DirectoryEntry {
+                        path: util::CString::from_string(file_name)?,
+                        file_attr: FileAttribute::None(),
+                        pad_1: [0; 0x2],
+                        entry_type: DirectoryEntryType::File,
+                        pad_2: [0; 0x3],
+                        file_size: if self.mode.contains(DirectoryOpenMode::NoFileSize()) { 0 } else { file_size }
+                    };
+        
+                    dir_entries.push(dir_entry);
+                    entry_added = true;
+                }
+            }
+
+            if !entry_added {
+                break;
+            }
+        }
+
+        Ok(dir_entries)
+    }
+
+    fn get_entry_count(&mut self) -> Result<usize> {
+        let dir_count = if self.mode.contains(DirectoryOpenMode::ReadDirectories()) { self.dir_iter.get_dir_count() } else { 0 };
+        let file_count = if self.mode.contains(DirectoryOpenMode::ReadFiles()) { self.dir_iter.get_file_count() } else { 0 };
+
+        Ok(dir_count + file_count)
+    }
+}
+
+pub struct RomFsFileSystem {
+    base_fs: Shared<RomFs>
+}
+
+impl RomFsFileSystem {
+    pub fn new(base_fs: RomFs) -> Shared<Self> {
+        Shared::new(Self {
+            base_fs: Shared::new(base_fs)
+        })
+    }
+
+    #[inline]
+    pub fn from_nca(nca: &mut NCA, fs_idx: usize) -> Result<Shared<Self>> {
+        let romfs = convert_io_result(nca.open_romfs_filesystem(fs_idx))?;
+        Ok(Self::new(romfs))
+    }
+}
+
+impl FileSystem for RomFsFileSystem {
+    fn create_file(&mut self, _path: PathBuf, _size: usize, _create_option: CreateOption) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn delete_file(&mut self, _path: PathBuf) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn create_directory(&mut self, _path: PathBuf) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn delete_directory(&mut self, _path: PathBuf) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn delete_directory_recursively(&mut self, _path: PathBuf) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn rename_file(&mut self, _old_path: PathBuf, _new_path: PathBuf) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn rename_directory(&mut self, _old_path: PathBuf, _new_path: PathBuf) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn get_entry_type(&mut self, path: PathBuf) -> Result<DirectoryEntryType> {
+        let path_str = path.as_path().display().to_string();
+
+        if path_str.is_empty() {
+            Ok(DirectoryEntryType::Directory)
+        }
+        else {
+            let is_file = self.base_fs.get().exists_file(path_str.clone());
+            let is_dir = self.base_fs.get().exists_dir(path_str.clone());
+
+            if is_dir || is_file {
+                if is_dir {
+                    Ok(DirectoryEntryType::Directory)
+                }
+                else {
+                    Ok(DirectoryEntryType::File)
+                }
+            }
+            else {
+                result::ResultPathNotFound::make_err()
+            }
+        }
+    }
+
+    fn open_file(&mut self, path: PathBuf, open_mode: FileOpenMode) -> Result<Shared<dyn File>> {
+        result_return_if!(open_mode != FileOpenMode::Read(), result::ResultWriteNotPermitted);
+        let path_str = path.as_path().display().to_string();
+
+        let mut base_fs_v = self.base_fs.get();
+        if let Ok(file_offset) = base_fs_v.get_file_offset(path_str.clone()) {
+            if let Ok(file_size) = base_fs_v.get_file_size(path_str) {
+                let file = Shared::new(RomFsFile::new(self.base_fs.clone(), file_offset, file_size));
+                return Ok(file);
+            }
+        }
+
+        result::ResultPathNotFound::make_err()
+    }
+
+    fn open_directory(&mut self, path: PathBuf, open_mode: DirectoryOpenMode) -> Result<Shared<dyn Directory>> {
+        let path_str = path.as_path().display().to_string();
+
+        if let Ok(dir_iter) = self.base_fs.get().open_dir_iterator(path_str) {
+            let dir = Shared::new(RomFsDirectory::new(dir_iter, open_mode));
+            Ok(dir)
+        }
+        else {
+            result::ResultPathNotFound::make_err()
+        }
+    }
+
+    fn commit(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+
+    fn get_free_space_size(&mut self, _path: PathBuf) -> Result<usize> {
+        Ok(0)
+    }
+
+    fn get_total_space_size(&mut self, _path: PathBuf) -> Result<usize> {
+        todo!("GetTotalSpaceSize for RomFsFileSystem");
+    }
+
+    fn clean_directory_recursively(&mut self, _path: PathBuf) -> Result<()> {
+        result::ResultWriteNotPermitted::make_err()
+    }
+
+    fn get_file_time_stamp_raw(&mut self, _path: PathBuf) -> Result<TimeStampRaw> {
+        // PFS0 files don't contain timestamp info
+        result::ResultNotImplemented::make_err()
+    }
+}
+
+// ---

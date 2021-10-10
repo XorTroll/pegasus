@@ -5,6 +5,7 @@ use crate::ipc::sf::sm::IUserInterface;
 use crate::ipc::server;
 use crate::kern::svc::Handle;
 use crate::kern::{proc::KProcess, thread::KThread, svc};
+use crate::ncm::ProgramId;
 use crate::sm::*;
 use crate::result::*;
 use super::EmulatedProcess;
@@ -13,7 +14,7 @@ use super::EmulatedProcess;
 
 pub fn start_process() -> Result<()> {
     start_ready();
-    let npdm = EmulatedProcess::make_npdm("sm", 27, 0x2000, 0x0100_0000_0000_1004, vec![
+    let npdm = EmulatedProcess::make_npdm("sm", 27, 0x2000, ProgramId(0x0100000000001004), vec![
         /* ... */
     ], 512)?;
 

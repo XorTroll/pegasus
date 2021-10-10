@@ -28,7 +28,7 @@ The config file, `config.cfg`, is a JSON file with the following fields:
 
 ## Source layout
 
-Since this ain't a small project, some guidelines about how this project's source code is structured:
+Since this ain't a small project, here are some guidelines about how this project's source code is structured:
 
 - Everything emulation-specific goes inside `emu` module.
 

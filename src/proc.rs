@@ -100,8 +100,8 @@ impl EmulatedProcess {
                 size: 0,
                 reserved_1: [0; 0x4],
                 flags: npdm::AcidFlags::new(true, false),
-                program_id_min: 0,
-                program_id_max: 0,
+                program_id_min: ProgramId(0),
+                program_id_max: ProgramId(0),
                 fs_access_control_offset: 0, // Same as above
                 fs_access_control_size: 0,
                 service_access_control_offset: 0,

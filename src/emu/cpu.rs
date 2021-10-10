@@ -189,7 +189,7 @@ fn unicorn_intr_hook(_uc_h: Handle, _intr_no: u32) {
 
 fn create_memory_region(segment_file_data: Vec<u8>, address: u64, is_compressed: bool, section_size: usize, perm: Permission) -> Result<MemoryRegion> {
     let mut segment_data = match is_compressed {
-        true => lz4::block::decompress(segment_file_data.as_slice(), Some(section_size as i32)).unwrap(),
+        true => lz4_flex::decompress(&segment_file_data, section_size).unwrap(),
         false => segment_file_data
     };
 

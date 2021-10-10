@@ -64,11 +64,11 @@ fn set_config(cfg: Config, path: String) {
     }
 }
 
-pub fn get_keyset() -> Keyset {
+pub fn get_keyset() -> &'static Keyset {
     unsafe {
         assert!(G_KEYSET.is_some());
 
-        G_KEYSET.as_ref().unwrap().clone()
+        G_KEYSET.as_ref().unwrap()
     }
 }
 

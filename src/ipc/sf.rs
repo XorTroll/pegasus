@@ -10,7 +10,7 @@ pub mod sm;
 
 pub mod set;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Buffer<const A: BufferAttribute, const S: usize> {
     pub buf: *const u8,
     pub size: usize

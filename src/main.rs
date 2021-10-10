@@ -77,7 +77,7 @@ fn main() {
             if let Some(proc) = thread.get().owner_process.as_ref() {
                 println!("* Process name: '{}'", proc.get().npdm.meta.name.get_str().unwrap());
                 println!("* Process ID: {:#X}", proc.get().id);
-                println!("* Program ID: {:#018X}", proc.get().npdm.aci0.program_id);
+                println!("* Program ID: {}", proc.get().npdm.aci0.program_id);
 
                 if let Some(ctx) = proc.get().cpu_ctx.as_ref() {
                     println!("* Modules:");
@@ -130,23 +130,6 @@ fn main() {
 
     emu::cfg::initialize().unwrap();
     ncm::initialize().unwrap();
-
-    {
-        // Test
-
-        let mut system_version_nca = ncm::lookup_content(ncm::StorageId::BuiltinSystem, 0x0100000000000809, cntx::nca::ContentType::Data).unwrap();
-        let mut system_version_fs = system_version_nca.open_romfs_filesystem(0).unwrap();
-
-        let mut fw_ver: set::FirmwareVersion = unsafe {
-            core::mem::zeroed()
-        };
-        let fw_ver_buf = unsafe {
-            std::slice::from_raw_parts_mut(&mut fw_ver as *mut _ as *mut u8, std::mem::size_of::<set::FirmwareVersion>())
-        };
-        system_version_fs.read_file(String::from("file"), 0, fw_ver_buf).unwrap();
-
-        log_line!("Read fw ver: {:?}", fw_ver);
-    }
 
     kern::initialize().unwrap();
     proc::initialize().unwrap();

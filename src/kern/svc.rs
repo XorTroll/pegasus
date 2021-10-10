@@ -233,7 +233,8 @@ pub enum MemoryState {
     NonDeviceIpc = 0x12,
     Kernel = 0x13,
     GeneratedCode = 0x14,
-    CodeOut = 0x15
+    CodeOut = 0x15,
+    Coverage = 0x16
 }
 
 bit_enum! {
@@ -249,9 +250,9 @@ bit_enum! {
 bit_enum! {
     MemoryAttribute (u32) {
         None = 0,
-        Borrowed = bit!(0),
-        IpcMapped = bit!(1),
-        DeviceMapped = bit!(2),
+        Locked = bit!(0),
+        IpcLocked = bit!(1),
+        DeviceShared = bit!(2),
         Uncached = bit!(3)
     }
 }
@@ -259,11 +260,11 @@ bit_enum! {
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 #[repr(C)]
 pub struct MemoryInfo {
-    pub base_address: usize,
+    pub base_address: u64,
     pub size: usize,
     pub state: MemoryState,
-    pub attribute: MemoryAttribute,
-    pub permission: MemoryPermission,
+    pub attr: MemoryAttribute,
+    pub perm: MemoryPermission,
     pub ipc_refcount: u32,
     pub device_refcount: u32,
     pub pad: u32,
