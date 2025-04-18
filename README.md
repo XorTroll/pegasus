@@ -2,6 +2,8 @@
 
 > Work-in-progress Nintendo Switch emulator, written in pure Rust and slightly less focused on gaming
 
+## **IMPORTANT!** this project is no longer continued.
+
 ## Information
 
 - This project aims to be a different emulator, not one mostly focused on gaming but slightly more inclined on the developer path. However, it is still in a quite early stage, so it's aim may or may not eventually change.
